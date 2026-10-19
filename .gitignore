@@ -25,7 +25,7 @@
 vignettes/*.html
 vignettes/*.pdf
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+# OAuth2 token
 .httr-oauth
 
 # knitr and R markdown default cache directories
@@ -48,7 +48,10 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Project Specific Folders & Files
 Data/
+Outputs/*.pdf
 
 # LaTeX auxiliary files
 *.aux
@@ -61,8 +64,23 @@ Data/
 *.fls
 *.fdb_latexmk
 
+# Strict block on Office binaries
+*.xlsx
+*.docx
+*.pptx
+
 # Office temp files
 ~$*.docx
 ~$*.xlsx
 
-Outputs/*.pdf
+# Large archives
+*.zip
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
