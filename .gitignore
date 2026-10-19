@@ -49,3 +49,20 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 Data/
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Office temp files
+~$*.docx
+~$*.xlsx
+
+Outputs/*.pdf
