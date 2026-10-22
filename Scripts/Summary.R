@@ -2,14 +2,14 @@ library(dplyr)
 library(tidyr)
 #Filter Data Set to Just Virginia 
 #Then Export the Virginia Dataset and Close Original Dataset to use New one. 
-df<- read.csv("Data/US_Accidents_March23.csv")
+#df<- read.csv("../Data/US_Accidents_March23.csv")
 
-dfva<-filter(df, State == "VA")
+#dfva<-filter(df, State == "VA")
+getwd()
 
+#write.table(dfva, file = "../Data/Virginia_Accidents.csv", sep = ",")
 
-write.table(dfva, file = "Data/Virginia_Accidents.csv", sep = ",")
-
-dfva<-read.csv("Data/US_Accidents_March23.csv")
+dfva<-read.csv("../Data/Virginia_Accidents.csv")
 str(dfva)
 head(dfva)
 dim(dfva)
