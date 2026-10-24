@@ -7,7 +7,7 @@ library(tidyr)
 #dfva<-filter(df, State == "VA")
 getwd()
 
-#write.table(dfva, file = "../Data/Virginia_Accidents.csv", sep = ",")
+write.csv(dfva, file = "../Data/Virginia_Accidents.csv", row.names = FALSE)
 
 dfva<-read.csv("../Data/Virginia_Accidents.csv")
 str(dfva)
