@@ -75,6 +75,10 @@ c(passes_original        = !inherits(try(check_va_complete(dffull, dfva), silent
 
 write_csv(dfva, "../Data/Virginia_Accidents.csv")
 gc()
+#Remove Unneeded memory from R Global Environment.----------------------
+rm(dfvacor,dffull, dffull_bad_spelling, dfva_incomplete)
+
+
 
 # ==========================================================================
 # FETCH & CLEAN OFFICIAL US CENSUS POPULATION DATA FOR VIRGINIA
@@ -221,6 +225,10 @@ dfva_county_summary <- dfva_joined %>%
 View(dfva_county_summary)
 head(dfva_county_summary, 20)
 View(dfva_joined)
+##Remove Unneeded Memory from R image-------------------------------------
+rm(dfva, dfva_clean, dfva_audit)
+
+
 ###---------------------- Graphing
 acc<-dfva_joined
 
