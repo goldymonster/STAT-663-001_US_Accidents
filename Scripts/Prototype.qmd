@@ -1,7 +1,23 @@
-
 ---
-title: "Prototype_Goldenberg_Maria"
-format: html
+title: "Prototype"
+author: Matthew Goldenberg, Maria Woods
+format:
+  html:
+    theme: [cosmo, lab.scss]
+    toc: true
+    toc-depth: 2
+    toc-title: "Steps"
+    number-sections: false
+    fontsize: 1.05rem
+    linestretch: 1.55
+    max-width: 62rem
+    code-copy: true
+    code-overflow: wrap
+    highlight-style: github
+    df-print: kable
+    fig-align: center
+    anchor-sections: true
+    link-external-newwindow: true
 date: today
 toc: true
 toc-depth: 3
@@ -12,7 +28,7 @@ code-fold: true
 Each R code chunk runs as its own separate entity so no chunk needs to have a previous chunk run before it to work. This is because they all draw data from the same /Data folder in the Zip drive as their starting active dataset. Since this is all large data manipulation down towards smaller more manageable datasets, only run that code where you want to see what the output creates. Whenever possible, tables that result from the output generated are shown.
 
 
-## Loads the needed R Libraries
+# Loads the needed R Libraries
 
 ```{r}
 #| output: false
@@ -28,11 +44,11 @@ options(tigris_use_cache = TRUE)
 library(tidyverse)
 ```
 
-## Initial Generation of the Virginia Dataset.
+# Initial Generation of the Virginia Dataset.
 
-### How to correctly download the initial data.
+## How to correctly download the initial data.
 
-To correctly generate the intial dataset to use in the follow up charts and graphs follow these directions.
+To correctly generate the initial dataset to use in the follow up charts and graphs follow these directions.
 
 1. Navigate to this website: https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
 2. Click download in the upper right hand corner of the website.
@@ -42,7 +58,7 @@ To correctly generate the intial dataset to use in the follow up charts and grap
 6. Extract it to the local folder labeled Data so that the code can work.
 
 
-### Validation Code and Extraction of Virginia from the full dataset. 
+## Validation Code and Extraction of Virginia from the full dataset. 
 
 The below code extracts from the full dataset file those rows that have the value under "State" = VA. This is in an effort to try to get a Virginia dataset only to draw graphs and run code on.
 
@@ -119,7 +135,7 @@ gc()
 rm(dfvacor,dffull, dffull_bad_spelling, dfva_incomplete)
 ```
 
-### Attempting Join of the Virginia Dataset with the US Census Bureau data.
+## Attempting Join of the Virginia Dataset with the US Census Bureau data.
 
 This code realizes that the Virginia Dataset by itself will unfairly bias results to the more populous counties as the "most accidents" are likely to occur in the biggest counties by virtue of the fact that there are just simply more people on the road. So we thought it might be helpful to try to link the current dataset using a join to a Census Bureau population dataset for Virginia counties.We can then weight our count of accidents by the population in each county to show a rate instead of a raw count of accidents per county.
 
@@ -127,11 +143,10 @@ Our dataset from kaggle offers two possibilities to join to a population data se
 
 Finally, at the end, un-needed dataframes were removed from the R image for efficient memory storage.
 
-Switch eval = false to eval = true to run the code and see what it does.
+Switch eval = false to true to see what the code does.
 
 ```{r}
 #| eval: false
-
 # ==========================================================================
 # FETCH & CLEAN OFFICIAL US CENSUS POPULATION DATA FOR VIRGINIA
 # ==========================================================================

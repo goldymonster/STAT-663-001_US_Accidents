@@ -1,0 +1,106 @@
+/*-- scss:defaults --*/
+// Interactive Code Supplement theme. One file, copied into every student package by
+// make-canvas.sh so each labNN/ folder still renders standalone. Palette and fonts match
+// the decks (fidelity-ledger-gmu.scss) so a lab looks like the course it belongs to.
+$font-family-sans-serif: "Source Serif 4", Georgia, serif;
+$font-family-monospace: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+$body-color:   #262b27;
+$link-color:   #005239;
+$primary:      #14213D;
+
+/*-- scss:rules --*/
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+body { background:#fbfbf9; }
+#title-block-header .quarto-title-banner { display:none; }
+header#title-block-header { border-bottom:3px solid #005239; padding-bottom:.6rem; margin-bottom:2rem; }
+h1.title { font-weight:700; letter-spacing:-.01em; color:#14213D; }
+.subtitle { font-family:"IBM Plex Mono",monospace; font-size:.82rem;
+  letter-spacing:.18em; text-transform:uppercase; color:#5F6F80; }
+
+h2 { margin-top:2.6rem; padding-top:1.1rem; border-top:1px solid #e3e3dd;
+     font-weight:700; color:#14213D; font-size:1.5rem; }
+
+// The graded object announces itself: every `> **YOUR ANSWER:**` prompt gets the amber
+// rail. Before this they were plain grey blockquotes, visually identical to a quotation.
+blockquote {
+  border-left:5px solid #A85F12; background:#fdf7ec;
+  padding:.85rem 1.15rem; margin:1.4rem 0; color:#3a3327; font-size:.98rem;
+}
+blockquote strong:first-child { color:#8a4d0a; letter-spacing:.03em; }
+
+div.sourceCode { border:1px solid #e0e0d8; border-radius:8px; background:#fafaf7; }
+pre code { font-size:.86rem; }
+code:not(pre code) { color:#005239; background:#eef4f1; padding:.1em .32em;
+  border-radius:4px; font-size:.9em; }
+
+.callout { border-radius:8px; }
+nav[role="doc-toc"] { font-size:.85rem; }
+nav[role="doc-toc"] > h2 { font-family:"IBM Plex Mono",monospace; font-size:.72rem;
+  letter-spacing:.2em; text-transform:uppercase; border:0; margin-top:0; color:#5F6F80; }
+table { font-size:.92rem; }
+
+/* ── Structural blocks ───────────────────────────────────────────────────────
+   Written by lab-blocks.lua from the bold label already at the head of each
+   block, so the .qmd gains no markup. One idea per colour:
+
+     amber   the graded object          YOUR ANSWER
+     green   the self-check             What you should see
+     navy    orientation before code    What this step does
+     grey    housekeeping               Setup once, Work at your own pace
+     violet  the AI-audit step
+
+   Colour is never the only signal. Every block keeps its bold label, and the
+   rails are weighted by priority (graded 5px, check 4px, the rest 3px), so the
+   structure survives the deuteranopia simulation this lab asks students to run.
+   Padding and margins match the plain blockquote above, so a lab that does not
+   load the filter looks the same as it does today.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+@mixin labblock($rail, $bg, $ink, $w: 3px) {
+  border-left: $w solid $rail;
+  background: $bg;
+  padding: .85rem 1.15rem;
+  margin: 1.4rem 0;
+  font-size: .98rem;
+  color: $ink;
+  > :first-child { margin-top: 0; }
+  > :last-child  { margin-bottom: 0; }
+}
+
+div.answer    { @include labblock(#A85F12, #fdf7ec, #3a3327, 5px); }
+div.answer    strong:first-child { color:#8a4d0a; letter-spacing:.03em; }
+
+div.check     { @include labblock(#005239, #eef4f1, #24322c, 4px); }
+div.check     strong:first-child { color:#005239; letter-spacing:.03em; }
+
+div.orient    { @include labblock(#14213D, #f1f3f8, #2b3242); }
+div.orient    strong:first-child { color:#14213D; letter-spacing:.03em; }
+
+div.logistics { @include labblock(#9aa3ab, #f4f4f1, #4a4f52); }
+div.logistics strong:first-child { color:#5F6F80; letter-spacing:.03em; }
+
+div.orient.ai { border-left-color:#5B3A8E; background:#f5f1fa; color:#3a2f4a; }
+div.orient.ai strong:first-child { color:#4a2f75; }
+h2.ai-step    { border-top-color:#5B3A8E; }
+
+/* GIVEN is machinery, YOURS is the exercise. The tab sits above the block so it
+   never collides with Quarto's copy button at the top right. */
+div.chunk { margin:1.4rem 0; padding-left:.9rem; border-left:3px solid transparent; }
+div.chunk::before {
+  display:inline-block; margin-bottom:.15rem;
+  font-family:"IBM Plex Mono", monospace; font-size:.62rem;
+  letter-spacing:.18em; padding:.1rem .45rem; border-radius:3px;
+}
+div.chunk div.sourceCode { margin-top:0; }
+
+div.chunk-given { border-left-color:#c2c7bd; }
+div.chunk-given::before { content:"GIVEN"; color:#6b7268; background:#eff0eb; }
+
+div.chunk-yours { border-left-color:#005239; }
+div.chunk-yours::before { content:"YOURS"; color:#005239; background:#eef4f1; }
+
+/* Several chunks hand over a wrangled table and then ask for the chart from it. */
+div.chunk-mixed { border-left-color:#005239; }
+div.chunk-mixed::before { content:"GIVEN + YOURS"; color:#005239; background:#eef4f1;
+  box-shadow: inset 3px 0 0 #c2c7bd; padding-left:.6rem; }
