@@ -297,7 +297,20 @@ rm(dfva, dfva_clean, dfva_audit, dfva_joined)
 
 ```{r VAvalidation}
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
+#Check Accident Severity
+check_severity <- function(x){
+  stopifnot(sum(unique(x$Severity))<=10)   
+  invisible(TRUE)
+}
 
+#datacorruption
+dfvacorrupt<-data.frame(Severity = 11, Random = 1:5) 
+View(dfvacorrupt)
+
+c(passes_original        = !inherits(try(check_severity(dfva_joined), 
+                                         silent = TRUE), "try-error"),
+  rejects_corrupt   =  inherits(try(check_severity(dfvacorrupt), 
+                                         silent = TRUE), "try-error"))
 
 
 ```
