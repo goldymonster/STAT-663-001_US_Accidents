@@ -1,23 +1,7 @@
 ---
 title: "Prototype"
 author: Matthew Goldenberg, Maria Woods
-format:
-  html:
-    theme: [cosmo, lab.scss]
-    toc: true
-    toc-depth: 2
-    toc-title: "Steps"
-    number-sections: false
-    fontsize: 1.05rem
-    linestretch: 1.55
-    max-width: 62rem
-    code-copy: true
-    code-overflow: wrap
-    highlight-style: github
-    df-print: kable
-    fig-align: center
-    anchor-sections: true
-    link-external-newwindow: true
+format: pdf
 date: today
 toc: true
 toc-depth: 3
@@ -30,7 +14,7 @@ Each R code chunk runs as its own separate entity so no chunk needs to have a pr
 
 # Loads the needed R Libraries
 
-```{r}
+```{r bring_needed_libraries_into_r}
 #| output: false
 # Install any missing packages once if needed:
 # install.packages(c("tidyverse", "data.table", "sf", "tigris"))
@@ -66,8 +50,8 @@ The below code extracts from the full dataset file those rows that have the valu
 
 Note, please turn eval = true to run the full code to see what it does.
 
-```{r}
-#| eval: false
+```{r create_VA_dataset}
+#| eval: true
 
 # ==========================================================================
 # STEP 1: FAST FILTER TO VIRGINIA & SAVE SUBSET
@@ -145,8 +129,8 @@ Finally, at the end, un-needed dataframes were removed from the R image for effi
 
 Switch eval = false to true to see what the code does.
 
-```{r}
-#| eval: false
+```{r join_with_US_Census_Bureau}
+#| eval: true
 # ==========================================================================
 # FETCH & CLEAN OFFICIAL US CENSUS POPULATION DATA FOR VIRGINIA
 # ==========================================================================
@@ -232,8 +216,6 @@ dfva_joined <- dfva_clean %>%
   left_join(va_pop, by = "census_key") %>%
   select(-cnty_raw, -cnty_clean, -cnty_base)
 
-View(dfva_joined)
-
 # ==========================================================================
 # STEP 5 SPATIAL AUDIT COMPARING COUNTY TEXT VS. GPS COORDINATES
 # ==========================================================================
@@ -269,8 +251,6 @@ mismatch_breakdown <- dfva_audit %>%
   filter(census_key != spatial_key | is.na(spatial_key)) %>%
   count(County, City, text_assigned = census_key, gps_assigned = spatial_key, sort = TRUE)
 
-View(mismatch_breakdown)
-
 # Summary Table Formulations -----
 dfva_county_summary <- dfva_joined %>%
   group_by(GEOID, census_name, population) %>%
@@ -287,20 +267,15 @@ dfva_county_summary <- dfva_joined %>%
   ) %>%
   arrange(desc(accidents_per_100k))
 
-# Inspect final outputs
-View(dfva_county_summary)
-head(dfva_county_summary, 20)
-View(dfva_joined)
 ##Remove Unneeded Memory from R image-------------------------------------
 rm(dfva, dfva_clean, dfva_audit)
 
 ## Write the joined dataset
 # Save full row-level Virginia dataset with Census population attached
 write_csv(dfva_joined, "../Data/Virginia_Accidents_With_Pop.csv")
-
 ```
 
-```{r}
+```{r graphs_and_charts}
 ###---------------------- Graphing
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
 
