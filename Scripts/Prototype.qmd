@@ -285,12 +285,21 @@ dfva_county_summary <- dfva_joined %>%
   ) %>%
   arrange(desc(accidents_per_100k))
 
-##Remove Unneeded Memory from R image-------------------------------------
-rm(dfva, dfva_clean, dfva_audit)
-
 ## Write the joined dataset
 # Save full row-level Virginia dataset with Census population attached
 write_csv(dfva_joined, "../Data/Virginia_Accidents_With_Pop.csv")
+##Remove Unneeded Memory from R image-------------------------------------
+rm(dfva, dfva_clean, dfva_audit, dfva_joined)
+
+```
+
+## Validation of VA dataset only
+
+```{r VAvalidation}
+dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
+
+
+
 ```
 
 # Graphs and Summary Tables
