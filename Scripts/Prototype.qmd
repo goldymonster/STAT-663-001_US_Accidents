@@ -21,7 +21,7 @@ options(tigris_use_cache = TRUE)
 ```
 ## How to correctly download the initial data.
 
-To correctly generate the initial dataset to use in the follow up charts and graphs follow these directions.
+To correctly generate the initial data set to use in the follow up charts and graphs follow these directions.
 
 1. Navigate to this website: https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
 2. Click download in the upper right hand corner of the website.
