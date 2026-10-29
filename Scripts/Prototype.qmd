@@ -3,33 +3,22 @@ title: "Prototype"
 author: Matthew Goldenberg, Maria Woods
 format: pdf
 date: today
-toc: true
-toc-depth: 3
-code-fold: true
 ---
+# Initial Generation of the Virginia Dataset.
 
-**Important Note**
-Each R code chunk runs as its own separate entity so no chunk needs to have a previous chunk run before it to work. This is because they all draw data from the same /Data folder in the Zip drive as their starting active dataset. Since this is all large data manipulation down towards smaller more manageable datasets, only run that code where you want to see what the output creates. Whenever possible, tables that result from the output generated are shown.
-
-
-# Loads the needed R Libraries
+## Loads the needed R Libraries
 
 ```{r bring_needed_libraries_into_r}
 #| output: false
 # Install any missing packages once if needed:
-# install.packages(c("tidyverse", "data.table", "sf", "tigris"))
+#install.packages(c("tidyverse", "data.table", "sf", "tigris"))
 
-library(tidyverse)  # Loads dplyr, tidyr, readr, stringr, ggplot2
-library(data.table) # For fast reading of the large US_Accidents CSV
-library(readxl)
+library(tidyverse)  
+library(data.table)
 library(sf)
 library(tigris)
 options(tigris_use_cache = TRUE)
-library(tidyverse)
 ```
-
-# Initial Generation of the Virginia Dataset.
-
 ## How to correctly download the initial data.
 
 To correctly generate the initial dataset to use in the follow up charts and graphs follow these directions.
@@ -41,55 +30,70 @@ To correctly generate the initial dataset to use in the follow up charts and gra
 5. Click extract all.
 6. Extract it to the local folder labeled Data so that the code can work.
 
+## Extraction of Virginia from the full dataset. 
 
-## Validation Code and Extraction of Virginia from the full dataset. 
+The below code extracts from the full data set file those rows that have the value under "State" = VA. This is in an effort to try to get a Virginia data set only to draw graphs and run code on. Note that for generate_initial_VAdataset and Validate_VA_Dataset R code chunks, we ran it once to give you the complete pdf. Then set eval: false so that it loads quicker and did not interfere with your running of the rest of the code.
 
-The below code extracts from the full dataset file those rows that have the value under "State" = VA. This is in an effort to try to get a Virginia dataset only to draw graphs and run code on.
+Switch to true to see code run
 
-**The two errors to gaurd against here are:** 1. in the underlying dataset, the authors can always choose to add additional columns to the Dataset to explore different effects on traffic. If you do not run the set up code and just use the Virginia dataset only without checks, you might miss the inclusion of these additional columns when the code is run. 2. the authors of the dataset can always choose to be inconsistent and abbreviate Virginia as VA, va, or type the full name of Virginia out. Since our analysis is based on Virginia data only, we want to make sure when we pull Virginia out of the full dataset that we are getting all Virginia records, and not just the part with only the abbreviation VA. We also want to make sure we are getting all columns to start building the dataset. This validation code checks for both parts by setting up the test and then setting up a falsification procedure as well (i.e. if the test passes everything, how do we know our test even does the correct job). Then to perform effective memory handling, at the end it kills the corrupt dataframes in the R image that were used in the falsification procedure, and the full data set once the Virginia dataset has been written to /Data.This leaves only dfva in the image space as a Virginia only dataset.
-
-Note, please turn eval = true to run the full code to see what it does.
-
-```{r create_VA_dataset}
-#| eval: true
-
-# ==========================================================================
-# STEP 1: FAST FILTER TO VIRGINIA & SAVE SUBSET
-# ==========================================================================
-
-#Bring Full table in
-dffull<- fread("../Data/US_Accidents_March23.csv")%>%
+```{r generate_initial_VAdataset}
+#| eval: false
+# Bring Full table in
+dffull <- fread("../Data/US_Accidents_March23.csv") %>%
   as_tibble()
 
 # Filter full table as just state
-dfva <- dffull |>
+dfva <- dffull %>%
   filter(State == "VA")
+# Write VA Only Dataset------------------------------
+write_csv(dfva, "../Data/Virginia_Accidents.csv")
+
+```
+## Validation Code of Virginia Data Set Against Full Data Set
+
+**The two errors to guard against here are:** 
+
+1. In the underlying data set, the authors can always choose to add additional columns to the data set to explore different effects on traffic. If you do not run the set up code and just use the Virginia data set only without checks, you might miss the inclusion of these additional columns when the code is run. For example, if you use a previous saved down version and don't check that the columns of the full data set = the columns of the reduced VA, the author's might change something by adding a column to their data set and you wouldn't know.
+
+2. The authors of the data set can always choose to be inconsistent and abbreviate Virginia as VA, va, or type the full name of Virginia out. Since our analysis is based on Virginia data only, we want to make sure when we pull Virginia out of the full data set that we are getting all Virginia records, and not just the part with only the abbreviation VA. We also want to make sure we are getting all columns to start building the data set. This validation code checks for both parts by setting up the test and then setting up a falsification procedure as well (i.e. if the test passes everything, how do we know our test even does the correct job). Then to perform effective memory handling, at the end it kills the corrupt data frames in the R image that were used in the falsification procedure, and the full data set once the Virginia data set has been written to /Data.This leaves only dfva in the image space as a Virginia only data set.
+
+```{r Validate_VA_Dataset}
+#| eval: false
 
 # Verify that the data brought in has the same dimensions as the full dataset
-# Verify dfva is the same column dimensions as the full
 check_col <- function(x, y){
   stopifnot(ncol(x) == ncol(y))   
   invisible(TRUE)
 }
 
-#create corruption (AI)
+# create corruption
 set.seed(123)
-dfvacor<-dfva |> 
+dfvacor <- dfva %>% 
   mutate(corcol = rnorm(nrow(dfva), mean = 50, sd = 10))
 
-#Verify works on original and fails on corrupted.
-c(passes_originalnew = !inherits(try(check_col(dffull, dfva), silent = TRUE), "try-error"),
-  rejects_corruptnew =  inherits(try(check_col(dffull, dfvacor), silent = TRUE), "try-error"))
+# Verify works on original and fails on corrupted.
+c(passes_originalnew = !inherits(try(check_col(dffull, dfva), 
+                                     silent = TRUE), "try-error"),
+  rejects_corruptnew =  inherits(try(check_col(dffull, dfvacor), 
+                                     silent = TRUE), "try-error"))
 
 #---------------------
-### --- Verify ALL Virginia observations were pulled in (Completeness & Alias Check) AI generated
-check_va_complete <- function(x, y) {
-  # 1. Count exact "VA" matches in the full dataset
-  expected_n <- sum(x$State == "VA", na.rm = TRUE)
-  # 2. Standardize strings (uppercase, trim whitespace, remove periods)
-  clean_state <- gsub("\\.", "", trimws(toupper(x$State)))
-  # 3. Count all possible Virginia representations ("VA", "VIRGINIA", "VA.", etc.)
-  clean_n <- sum(clean_state %in% c("VA", "VIRGINIA"), na.rm = TRUE)
+### --- Verify ALL Virginia observations were pulled in 
+#(Completeness & Alias Check) 
+check_va_complete <- function(full_states, y) {
+  # 1. Count exact "VA" matches
+  expected_n <- sum(full_states == "VA", na.rm = TRUE)
+  
+  # 2. Extract unique states first (massive speed improvement - 
+  # only ~50 strings to clean instead of millions)
+  unique_states <- unique(full_states)
+  clean_unique <- gsub("\\.", "", trimws(toupper(unique_states)))
+  
+  # 3. Find which unique state values match "VA" or "VIRGINIA" 
+  # and count their total occurrences
+  va_variants <- unique_states[clean_unique %in% c("VA", "VIRGINIA")]
+  clean_n <- sum(full_states %in% va_variants, na.rm = TRUE)
+  
   stopifnot(
     !anyNA(y$State),
     all(y$State == "VA"),
@@ -100,23 +104,27 @@ check_va_complete <- function(x, y) {
 }
 
 # Create corruption 1: Simulate dropping 10 rows from dfva
-dfva_incomplete <- dfva |> 
+dfva_incomplete <- dfva %>% 
   slice(-c(1:10))
 
-# Create corruption 2: Simulate someone typing "Virginia" instead of "VA" in dffull
-dffull_bad_spelling <- dffull
-dffull_bad_spelling$State[which(dffull$State == "VA")[1]] <- "Virginia"
+# Create corruption 2: Use a TINY mock dataset instead of 
+#duplicating dffull to save RAM
+mock_full_states <- c("MD", "NY", "VA", "VA", "Virginia", "va")
+mock_dfva_bad <- data.frame(State = c("VA", "VA")) 
+# Misses the "Virginia" and "va" variants
 
 # Verify works on original and fails on both corruptions
-c(passes_original        = !inherits(try(check_va_complete(dffull, dfva), silent = TRUE), "try-error"),
-  rejects_dropped_rows   =  inherits(try(check_va_complete(dffull, dfva_incomplete), silent = TRUE), "try-error"),
-  rejects_virginia_spell =  inherits(try(check_va_complete(dffull_bad_spelling, y), silent = TRUE), "try-error"))
-# Write VA Only Dataset------------------------------
+c(passes_original        = !inherits(try(check_va_complete(dffull$State, dfva), 
+                                         silent = TRUE), "try-error"),
+  rejects_dropped_rows   =  inherits(try(check_va_complete(dffull$State, dfva_incomplete), 
+                                         silent = TRUE), "try-error"),
+  rejects_virginia_spell =  inherits(try(check_va_complete(mock_full_states, mock_dfva_bad), 
+                                         silent = TRUE), "try-error"))
 
-write_csv(dfva, "../Data/Virginia_Accidents.csv")
-gc()
-#Remove Unneeded memory from R Global Environment.----------------------
-rm(dfvacor,dffull, dffull_bad_spelling, dfva_incomplete)
+
+
+# Remove Unneeded memory from R Global Environment.----------------------
+rm(dfvacor, dffull, dfva_incomplete, mock_full_states, mock_dfva_bad)
 ```
 
 ## Attempting Join of the Virginia Dataset with the US Census Bureau data.
@@ -126,8 +134,6 @@ This code realizes that the Virginia Dataset by itself will unfairly bias result
 Our dataset from kaggle offers two possibilities to join to a population data set. First, our dataset has "Counties" as a column variable. It should be possible, but complicated, to do text editing and link this column to the Census data.  Second, our dataset has geolocation data such as longitude and latitude of the accident. Because analyzing counties was important to us with our question, we choose the first method as it seemed to have a stronger tie to the original county column in the dataset and the exact geo-location of the accident may not be a 1-1 tie to the official US Census Bureau county name given in our Kaggle dataset.Then we used the geolocation dataset as a verification check with the idea that if there is a low disagreement between what the geolocated data of the accident would say regarding the location of the accident, and the county name, then we can trust the population values we are drawing from the Census Bureau. The verification check also made sure using anti_join, that we were not missing any Virginia populations. 
 
 Finally, at the end, un-needed dataframes were removed from the R image for efficient memory storage.
-
-Switch eval = false to true to see what the code does.
 
 ```{r join_with_US_Census_Bureau}
 #| eval: true
@@ -144,7 +150,8 @@ va_pop <- read_csv(
   locale = locale(encoding = "latin1"),
   show_col_types = FALSE
 ) %>%
-  filter(STNAME == "Virginia", SUMLEV == "050") %>% # 050 = All 133 VA Counties & Independent Cities
+  filter(STNAME == "Virginia", SUMLEV == "050") %>% 
+  # 050 = All 133 VA Counties & Independent Cities
   transmute(
     GEOID       = paste0(STATE, COUNTY),
     census_name = str_squish(CTYNAME),
@@ -168,7 +175,8 @@ unambiguous_va_cities <- c(
 
 dfva_clean <- dfva %>%
   mutate(
-    # 1. Standardize encoding, remove parentheses around "(city)" or "(county)", and lowercase
+    # 1. Standardize encoding, 
+    #remove parentheses around "(city)" or "(county)", and lowercase
     cnty_raw   = str_to_lower(str_squish(iconv(County, to = "UTF-8", sub = ""))),
     cnty_clean = str_squish(str_replace_all(cnty_raw, "[()]", "")),
     
@@ -184,15 +192,21 @@ dfva_clean <- dfva %>%
       # Bedford city merged into Bedford County in 2013
       cnty_base == "bedford" ~ "bedford county",
       
-      # Resolve the 4 VA County vs. Independent City collisions (Fairfax, Roanoke, Richmond, Franklin)
-      # Because raw independent cities are labeled "(city)" or "city", keep them as "city", 
-      # and map plain "Fairfax" / "Roanoke" / "Richmond" / "Franklin" directly to "county"
-      cnty_clean %in% c("fairfax city", "roanoke city", "richmond city", "franklin city") ~ cnty_clean,
+      # Resolve the 4 VA County vs. Independent City collisions 
+        #(Fairfax, Roanoke, Richmond, Franklin)
+      # Because raw independent cities are labeled 
+        #"(city)" or "city", keep them as "city", 
+        # and map plain "Fairfax" / "Roanoke" / "Richmond" / 
+        #"Franklin" directly to "county"
+      cnty_clean %in% c("fairfax city", "roanoke city", 
+                        "richmond city", "franklin city") ~ cnty_clean,
       str_detect(cnty_clean, "^city of (fairfax|roanoke|richmond|franklin)$") ~ paste0(str_remove(cnty_clean, "^city of "), " city"),
-      cnty_base %in% c("fairfax", "roanoke", "richmond", "franklin") ~ paste0(cnty_base, " county"),
+      cnty_base %in% c("fairfax", "roanoke", "richmond", "franklin") 
+      ~ paste0(cnty_base, " county"),
       
       # Append " city" to the 34 unambiguous independent cities
-      cnty_base %in% unambiguous_va_cities ~ paste0(cnty_base, " city"),
+      cnty_base %in% unambiguous_va_cities 
+      ~ paste0(cnty_base, " city"),
       
       # Append " county" to all remaining Virginia counties
       !is.na(cnty_base) & cnty_base != "" ~ paste0(cnty_base, " county"),
@@ -211,7 +225,8 @@ unmatched <- dfva_clean %>%
 
 print(unmatched)
 
-# 2. Left join population data onto the accident records and remove helper columns
+# 2. Left join population data onto the accident records 
+  # and remove helper columns
 dfva_joined <- dfva_clean %>%
   left_join(va_pop, by = "census_key") %>%
   select(-cnty_raw, -cnty_clean, -cnty_base)
@@ -221,7 +236,8 @@ dfva_joined <- dfva_clean %>%
 # ==========================================================================
 
 
-# cb = FALSE uses full legal boundaries (including bridges over water in Hampton Roads/Arlington)
+# cb = FALSE uses full legal boundaries 
+#(including bridges over water in Hampton Roads/Arlington)
 va_polygons <- counties(state = "VA", cb = FALSE, year = 2022) %>%
   transmute(
     spatial_GEOID = GEOID,
@@ -231,7 +247,8 @@ va_polygons <- counties(state = "VA", cb = FALSE, year = 2022) %>%
 
 dfva_audit <- dfva_clean %>%
   filter(!is.na(Start_Lng), !is.na(Start_Lat)) %>%
-  st_as_sf(coords = c("Start_Lng", "Start_Lat"), crs = 4326, remove = FALSE) %>%
+  st_as_sf(coords = c("Start_Lng", "Start_Lat"), 
+           crs = 4326, remove = FALSE) %>%
   st_transform(st_crs(va_polygons)) %>%
   st_join(va_polygons, join = st_within) %>%
   st_drop_geometry()
@@ -249,7 +266,8 @@ print(audit_summary)
 
 mismatch_breakdown <- dfva_audit %>%
   filter(census_key != spatial_key | is.na(spatial_key)) %>%
-  count(County, City, text_assigned = census_key, gps_assigned = spatial_key, sort = TRUE)
+  count(County, City, text_assigned = census_key, 
+        gps_assigned = spatial_key, sort = TRUE)
 
 # Summary Table Formulations -----
 dfva_county_summary <- dfva_joined %>%
@@ -274,6 +292,9 @@ rm(dfva, dfva_clean, dfva_audit)
 # Save full row-level Virginia dataset with Census population attached
 write_csv(dfva_joined, "../Data/Virginia_Accidents_With_Pop.csv")
 ```
+
+# Graphs and Summary Tables
+
 
 ```{r graphs_and_charts}
 ###---------------------- Graphing
@@ -427,3 +448,19 @@ county_summary %>%
   ) 
 ```
 
+
+# AI Tracker
+
+| Task | Tool/model & date | AI contribution | Human revision | Verification performed | Residual concern |
+|---|---|---|---|---|---|
+|AI to Help Set Up GitHub Repo|Gemini Pro. 10/19/2026|Step by Step Directions For How to Set Up the Repo Successfully|NA|NA|NA|
+|Forgot how to add a Column to a DataFrame so I could corrupt it for a check|	Gemini Pro, 10/25/2026|	Suggested to use dplyr mutate function to add the column|	Successfully executed dpylr mutate to create corrupted data check.|	NA|	Only checks if columns are the same count of columns. Doesn't check if any have changed since the last update.|
+|Wasn't really sure how to create the check successfully to make sure all VA records from the full dataset were successfully brought over to the VA one. Wanted it to adjust for abbreviations, acronyms etc.So figuring out the string combos, everything to check, etc. got super complicated.|	Gemini Pro, 10/25/2026|	Created full check.|	copied code in|	NA|	NA|
+|Full check was taking a while to render so wanted to look into whether there was a simpler easier method| Gemini Pro 10/29/26| AI taught me how I could simplify the corrupt data frames and data itself so the validations run on a smaller subset|Used the AI provided Code|Ran Successfully|None|
+|Join and normalize Virginia traffic accident data with U.S. Census population totals in R|Gemini Pro, October 29, 2026|Developed tidyverse and Base R scripts to download Census data, harmonize Virginia's independent city vs. county naming collisions, and perform a spatial (sf/tigris) vs. text geocoding audit.|	User provided dataset structure context, screenshot evidence of (city) formatting and James City/Charles City errors, and a spatial mismatch audit table, driving iterative regex and rule refinement.|AI utilized the ds_python_interpreter to mathematically verify the row sums (1,737 rows) and bidirectional highway border splits from the user's uploaded mismatch screenshot.|Inherent dataset geocoding biases remain: mailing address bleed (e.g., Fairfax accidents labeled Alexandria), enclave city misattribution (Salem vs. Roanoke County), and lack of adjustment for commuter/through-traffic volume.|
+
+# Individual Tracker
+
+| Date | Who Did It | What Was Produced | How Was It Verified |
+|---|---|---|---|---|---|
+|10/29/2026|Matthew|Created QMD|---|
