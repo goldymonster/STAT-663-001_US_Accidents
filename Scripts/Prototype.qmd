@@ -23,21 +23,23 @@ options(tigris_use_cache = TRUE)
 
 To correctly generate the initial data set to use in the follow up charts and graphs follow these directions.
 
-1. Navigate to this website: https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
-2. Click download in the upper right hand corner of the website.
-3. Click download dataset as zip.
-4. Click the file that opens.
-5. Click extract all.
-6. Extract it to the local folder labeled Data so that the code can work.
+1. Create a folder called Data and a Folder Called Scripts.
+2. Capitalization Matters, both folders should start with a capital letter.
+3. These two folders should be in the same parent folder and the parent folder can be called whatever you want the parent folder to be called.
+4. Save this QMD file in the folder called Scripts.
+5. Navigate to this website: https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
+6. Click download in the upper right hand corner of the website.
+7. Click download dataset as zip.
+8. Click the file that opens.
+9. Click extract all.
+10. Extract it to the folder you created labeled Data so that the code can work.
 
 ## Extraction of Virginia from the full dataset. 
 
-The below code extracts from the full data set file those rows that have the value under "State" = VA. This is in an effort to try to get a Virginia data set only to draw graphs and run code on. Note that for generate_initial_VAdataset and Validate_VA_Dataset R code chunks, we ran it once to give you the complete pdf. Then set eval: false so that it loads quicker and did not interfere with your running of the rest of the code.
-
-Switch to true to see code run
+The below code extracts from the full data set file those rows that have the value under "State" = VA. This is in an effort to try to get a Virginia data set only to draw graphs and run code on. 
 
 ```{r generate_initial_VAdataset}
-#| eval: false
+#| eval: true
 # Bring Full table in
 dffull <- fread("../Data/US_Accidents_March23.csv") %>%
   as_tibble()
@@ -58,7 +60,7 @@ write_csv(dfva, "../Data/Virginia_Accidents.csv")
 2. The authors of the data set can always choose to be inconsistent and abbreviate Virginia as VA, va, or type the full name of Virginia out. Since our analysis is based on Virginia data only, we want to make sure when we pull Virginia out of the full data set that we are getting all Virginia records, and not just the part with only the abbreviation VA. We also want to make sure we are getting all columns to start building the data set. This validation code checks for both parts by setting up the test and then setting up a falsification procedure as well (i.e. if the test passes everything, how do we know our test even does the correct job). Then to perform effective memory handling, at the end it kills the corrupt data frames in the R image that were used in the falsification procedure, and the full data set once the Virginia data set has been written to /Data.This leaves only dfva in the image space as a Virginia only data set.
 
 ```{r Validate_VA_Dataset}
-#| eval: false
+#| eval: true
 
 # Verify that the data brought in has the same dimensions as the full dataset
 check_col <- function(x, y){
