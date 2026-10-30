@@ -293,25 +293,37 @@ rm(dfva, dfva_clean, dfva_audit, dfva_joined)
 
 ```
 
-## Validation of VA dataset only
+## Validation of Analysis Data Set only
+
+Since accident Severity is a main portion of our analysis, this validation check looks at accident Severity and makes sure that there are no NA's or values off the expected accident Severity scale of 1-4. This tests the data dictionary on Kaggle for this column where it describes Severity as:
+
+Shows the severity of the accident, a number between 1 and 4, where 1 indicates the least impact on traffic (i.e., short delay as a result of the accident) and 4 indicates a significant impact on traffic (i.e., long delay).
 
 ```{r VAvalidation}
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
+
 #Check Accident Severity
 check_severity <- function(x){
-  stopifnot(sum(unique(x$Severity))<=10)   
+  stopifnot(sum(unique(x$Severity))<=10,
+            !any(is.na(x$Severity)))   
   invisible(TRUE)
 }
 
-#datacorruption
-dfvacorrupt<-data.frame(Severity = 11, Random = 1:5) 
-View(dfvacorrupt)
+#data corruption insertion of severity 5
+dfvacorrupt<-data.frame(Severity = 1:5, Random = 1:5) 
+#data corruption, insertion of NA values.
+dfvacorrupt1<-data.frame(Severity = as.numeric(c(1,2,"",4, 4)), Random = 1:5)
 
+#Checks Severity
 c(passes_original        = !inherits(try(check_severity(dfva_joined), 
                                          silent = TRUE), "try-error"),
   rejects_corrupt   =  inherits(try(check_severity(dfvacorrupt), 
                                          silent = TRUE), "try-error"))
-
+#Checks NA
+c(passes_original        = !inherits(try(check_severity(dfva_joined), 
+                                         silent = TRUE), "try-error"),
+  rejects_corrupt   =  inherits(try(check_severity(dfvacorrupt1), 
+                                         silent = TRUE), "try-error"))
 
 ```
 
