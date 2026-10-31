@@ -6,13 +6,22 @@ date: today
 ---
 # Initial Generation of the Virginia Dataset.
 
+## Install Dependencies
+
+This code requires the following packages to run successfully: tidyverse, data.table, sf, tigris.
+If this is your first time using R and this code, switch eval: false to be eval: true and run the code to install these packages. Then switch this back to eval: false.
+
+
+```{r Download_Library_Dependencies}
+#| eval: false
+# Install any missing packages once if needed:
+install.packages(c("tidyverse", "data.table", "sf", "tigris"))
+```
+
 ## Loads the needed R Libraries
 
 ```{r bring_needed_libraries_into_r}
 #| output: false
-# Install any missing packages once if needed:
-#install.packages(c("tidyverse", "data.table", "sf", "tigris"))
-
 library(tidyverse)  
 library(data.table)
 library(sf)
@@ -25,7 +34,7 @@ To correctly generate the initial data set to use in the follow up charts and gr
 
 1. Create a folder called Data and a Folder Called Scripts.
 2. Capitalization Matters, both folders should start with a capital letter.
-3. These two folders should be in the same parent folder and the parent folder can be called whatever you want the parent folder to be called.
+3. These two folders should be subfolders in the same parent folder and the parent folder can be called whatever you want the parent folder to be called.
 4. Save this QMD file in the folder called Scripts.
 5. Navigate to this website: https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
 6. Click download in the upper right hand corner of the website.
