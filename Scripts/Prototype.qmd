@@ -62,11 +62,14 @@ write_csv(dfva, "../Data/Virginia_Accidents.csv")
 ```
 ## Validation Code of Virginia Data Set Against Full Data Set
 
-**The two errors to guard against here are:** 
+**What your verification established about that first output. A defect you found and corrected, or a check it survived — both are complete answers. Name the check, and name what it could not settle.**
 
-1. In the underlying data set, the authors can always choose to add additional columns to the data set to explore different effects on traffic. If you do not run the set up code and just use the Virginia data set only without checks, you might miss the inclusion of these additional columns when the code is run. For example, if you use a previous saved down version and don't check that the columns of the full data set = the columns of the reduced VA, the author's might change something by adding a column to their data set and you wouldn't know.
+The code below shows that the Virginia data survives two checks. 
 
-2. The authors of the data set can always choose to be inconsistent and abbreviate Virginia as VA, va, or type the full name of Virginia out. Since our analysis is based on Virginia data only, we want to make sure when we pull Virginia out of the full data set that we are getting all Virginia records, and not just the part with only the abbreviation VA. We also want to make sure we are getting all columns to start building the data set. This validation code checks for both parts by setting up the test and then setting up a falsification procedure as well (i.e. if the test passes everything, how do we know our test even does the correct job). Then to perform effective memory handling, at the end it kills the corrupt data frames in the R image that were used in the falsification procedure, and the full data set once the Virginia data set has been written to /Data.This leaves only dfva in the image space as a Virginia only data set.
+1. Does the Virginia only data set have the same count of columns as the data set in Kaggle?
+  a. This protects against the authors changing the data set on Kaggle by adding columns that aren't represented in the data set that the code is run. The idea is that this prompts a re-download of the original data set.
+2. Does the Virginia only data set have the types of VA as the full data set?
+  a. This protects against the authors using a different code for VA in the update of the full data set. If the authors use VA, Virginia, or any blanks this could impact our future graphs.
 
 ```{r Validate_VA_Dataset}
 #| eval: true
@@ -95,12 +98,11 @@ check_va_complete <- function(full_states, y) {
   # 1. Count exact "VA" matches
   expected_n <- sum(full_states == "VA", na.rm = TRUE)
   
-  # 2. Extract unique states first (massive speed improvement - 
-  # only ~50 strings to clean instead of millions)
+  # 2. Extract unique states first
   unique_states <- unique(full_states)
   clean_unique <- gsub("\\.", "", trimws(toupper(unique_states)))
   
-  # 3. Find which unique state values match "VA" or "VIRGINIA" 
+  # 3. Find which unique state values match "VA" or "VIRGINIA" or other versions
   # and count their total occurrences
   va_variants <- unique_states[clean_unique %in% c("VA", "VIRGINIA")]
   clean_n <- sum(full_states %in% va_variants, na.rm = TRUE)
@@ -138,13 +140,19 @@ c(passes_original        = !inherits(try(check_va_complete(dffull$State, dfva),
 rm(dfvacor, dffull, dfva_incomplete, mock_full_states, mock_dfva_bad)
 ```
 
-## Attempting Join of the Virginia Dataset with the US Census Bureau data.
+## Attempting Join of the Virginia Data Set with the US Census Bureau data.
 
-This code realizes that the Virginia Dataset by itself will unfairly bias results to the more populous counties as the "most accidents" are likely to occur in the biggest counties by virtue of the fact that there are just simply more people on the road. So we thought it might be helpful to try to link the current dataset using a join to a Census Bureau population dataset for Virginia counties.We can then weight our count of accidents by the population in each county to show a rate instead of a raw count of accidents per county.
+This code realizes that the Virginia Data Set by itself will unfairly bias results to the more populous counties as the "most accidents" are likely to occur in the biggest counties by virtue of the fact that there are just simply more people on the road. So we thought it might be helpful to try to link the current data set using a join to a Census Bureau population data set for Virginia counties.We can then weight our count of accidents by the population in each county to show a rate instead of a raw count of accidents per county.
 
-Our dataset from kaggle offers two possibilities to join to a population data set. First, our dataset has "Counties" as a column variable. It should be possible, but complicated, to do text editing and link this column to the Census data.  Second, our dataset has geolocation data such as longitude and latitude of the accident. Because analyzing counties was important to us with our question, we choose the first method as it seemed to have a stronger tie to the original county column in the dataset and the exact geo-location of the accident may not be a 1-1 tie to the official US Census Bureau county name given in our Kaggle dataset.Then we used the geolocation dataset as a verification check with the idea that if there is a low disagreement between what the geolocated data of the accident would say regarding the location of the accident, and the county name, then we can trust the population values we are drawing from the Census Bureau. The verification check also made sure using anti_join, that we were not missing any Virginia populations. 
+Our data set from kaggle offers two possibilities to join to a population data set. First, our data set has "Counties" as a column variable. It should be possible, but complicated, to do text editing and link this column to the Census data.  Second, our data set has geolocation data such as longitude and latitude of the accident. Because analyzing counties was important to us with our question, we choose the first method as it seemed to have a stronger tie to the original county column in the data set and the exact geo-location of the accident may not be a 1-1 tie to the official US Census Bureau county name given in our Kaggle data set.Then we used the geolocation data set as a verification check with the idea that if there is a low disagreement between what the geolocated data of the accident would say regarding the location of the accident, and the county name, then we can trust the population values we are drawing from the Census Bureau. The verification check also made sure using anti_join, that we were not missing any Virginia populations. 
 
-Finally, at the end, un-needed dataframes were removed from the R image for efficient memory storage.
+Finally, at the end, un-needed data frames were removed from the R image for efficient memory storage.
+
+**What your verification established about that first output. A defect you found and corrected, or a check it survived — both are complete answers. Name the check, and name what it could not settle.**
+
+The verification check found that the Virginia data set survived a test to make sure there was no un-joined counties from the Census Bureau data set with 0 unmatched census keys. When looking at the comparison between approaches (geolocation codes approach versus performing the join by county names), the mismatch between approaches was small. As a result of this mismatch, this check could not really settle if location would have been a better then longitude and latitude for judging where the accident occurred and what population value to assign to each accident.
+
+
 
 ```{r join_with_US_Census_Bureau}
 #| eval: true
@@ -273,7 +281,6 @@ audit_summary <- dfva_audit %>%
     match_percentage = round((exact_matches / total_rows) * 100, 2)
   )
 
-print(audit_summary)
 
 mismatch_breakdown <- dfva_audit %>%
   filter(census_key != spatial_key | is.na(spatial_key)) %>%
@@ -310,6 +317,10 @@ Since accident Severity is a main portion of our analysis, this validation check
 
 Shows the severity of the accident, a number between 1 and 4, where 1 indicates the least impact on traffic (i.e., short delay as a result of the accident) and 4 indicates a significant impact on traffic (i.e., long delay).
 
+**What your verification established about that first output. A defect you found and corrected, or a check it survived — both are complete answers. Name the check, and name what it could not settle.**
+
+The check on severity survived, all observations in the Virginia Data Set have Severity 1-4 and no NA's. Severity is defined as delay, but delay can happen in an accident for items that do not pertain to the Severity of the accident. For example, a remote location could cause a higher "delay" because its harder to get accident clean up equipment to that location. Thus, this check could not measure whether severity is a good measure of challenge in an accident.
+
 ```{r VAvalidation}
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
 
@@ -335,8 +346,53 @@ c(passes_original        = !inherits(try(check_severity(dfva_joined),
                                          silent = TRUE), "try-error"),
   rejects_corrupt   =  inherits(try(check_severity(dfvacorrupt1), 
                                          silent = TRUE), "try-error"))
-
 ```
+
+**What your verification established about that first output. A defect you found and corrected, or a check it survived — both are complete answers. Name the check, and name what it could not settle.**
+
+Finally, because we might want to draw a time graph or animation in the dashboard, we decided to validate start and end time of the accident as well to make sure there are no data errors (end time coming before start time) and that every accident has an accident timing.
+
+Our data survived this check, start time in the data set is always before the end time of the data set and that there are no missing values. End time is defined in the data set by:
+
+"Shows end time of the accident in local time zone. End time here refers to when the impact of accident on traffic flow was dismissed."
+
+This data check can not establish whether "when traffic flow was dismissed" is an accurate judgment of end time as "when traffic flow was dismissed is somewhat ambiguous. 
+
+```{r}
+dfva_joined$Start_Time<- as.POSIXct(
+    dfva_joined$Start_Time,
+    format = "%Y-%m-%dT%H:%M:%OSZ",
+    tz = "UTC"
+  )
+dfva_joined$End_Time <- as.POSIXct(
+    dfva_joined$End_Time,
+    format = "%Y-%m-%dT%H:%M:%OSZ",
+    tz = "UTC")
+
+#Check Timing
+check_timing <- function(x){
+  stopifnot(x$Start_Time <= x$End_Time,
+            !any(is.na(x$Start_time)),
+            !any(is.na(x$End_time)))   
+  invisible(TRUE)
+}
+corrupttiming<- data.frame(Start_Time = as.POSIXct(
+    "2016-11-30T16:52:00Z",
+    format = "%Y-%m-%dT%H:%M:%OSZ",
+    tz = "UTC"
+  ), End_Time = as.POSIXct(
+    "2016-11-30T12:52:00Z",
+    format = "%Y-%m-%dT%H:%M:%OSZ",
+    tz = "UTC"
+  ), random = 1:5)
+
+#Checks Timing
+c(passes_original        = !inherits(try(check_timing(dfva_joined), 
+                                         silent = TRUE), "try-error"),
+  rejects_corrupt   =  inherits(try(check_timing(corrupttiming), 
+                                         silent = TRUE), "try-error"))
+```
+
 
 # Graphs and Summary Tables
 
@@ -503,6 +559,7 @@ county_summary %>%
 |Wasn't really sure how to create the check successfully to make sure all VA records from the full dataset were successfully brought over to the VA one. Wanted it to adjust for abbreviations, acronyms etc.So figuring out the string combos, everything to check, etc. got super complicated.|	Gemini Pro, 10/25/2026|	Created full check.|	copied code in|	NA|	NA|
 |Full check was taking a while to render so wanted to look into whether there was a simpler easier method| Gemini Pro 10/29/26| AI taught me how I could simplify the corrupt data frames and data itself so the validations run on a smaller subset|Used the AI provided Code|Ran Successfully|None|
 |Join and normalize Virginia traffic accident data with U.S. Census population totals in R|Gemini Pro, October 29, 2026|Developed tidyverse and Base R scripts to download Census data, harmonize Virginia's independent city vs. county naming collisions, and perform a spatial (sf/tigris) vs. text geocoding audit.|	User provided dataset structure context, screenshot evidence of (city) formatting and James City/Charles City errors, and a spatial mismatch audit table, driving iterative regex and rule refinement.|AI utilized the ds_python_interpreter to mathematically verify the row sums (1,737 rows) and bidirectional highway border splits from the user's uploaded mismatch screenshot.|Inherent dataset geocoding biases remain: mailing address bleed (e.g., Fairfax accidents labeled Alexandria), enclave city misattribution (Salem vs. Roanoke County), and lack of adjustment for commuter/through-traffic volume.|
+Forgot how to coerce time variables to non-character in R|Gemini Pro 11/1/2026|Suggested the code in my timing check|Used as stated in the AI|Verification in part conducted with generating corrupt data to make sure the check worked.|NA|
 
 # Individual Tracker
 
