@@ -396,6 +396,8 @@ c(passes_original        = !inherits(try(check_timing(dfva_joined),
 
 # Graphs and Summary Tables
 
+## The Question We Are Investigating From M1
+Which five Virginia counties experience the highest frequency of severe traffic accidents, and which weather conditions are most strongly related to these severe accidents? 
 
 ```{r graphs_and_charts}
 ###---------------------- Graphing
@@ -505,3 +507,5 @@ Forgot how to coerce time variables to non-character in R|Gemini Pro 11/1/2026|S
 | Date | Who Did It | What Was Produced | How Was It Verified |
 |---|---|---|---|---|---|
 |10/29/2026|Matthew|Created QMD|---|
+|10/28/2026|Matthew|Created Validation Checks|---|
+|10/27/2026|Matthew|Joined Dataset to US Census Bureau|---|
