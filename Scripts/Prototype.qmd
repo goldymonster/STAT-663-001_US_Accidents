@@ -1,6 +1,6 @@
 ---
 title: "Prototype"
-author: Matthew Goldenberg, Maria Woods
+author: Matthew Goldenberg, Maria Wood
 format: pdf
 date: today
 ---
@@ -403,150 +403,87 @@ dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
 
 acc<-dfva_joined
 
-summary(acc)
-
-table(acc$Severity)
-summary(acc$`Precipitation(in)`)
-
-
 acc <- acc %>% mutate(severe = Severity >= 3)
 
-acc %>%
-  filter(!is.na(Severity)) %>%
-  count(Severity) %>%
-  ggplot(aes(x = factor(Severity), y = n)) +
-  geom_col(fill = "steelblue") +
-  labs(
-    title = "Virginia Car Accidents by Severity",
-    x = "Accident Severity",
-    y = "Number of Accidents")
-
-
-acc %>%
-  summarise(
-    total_accidents = n(),
-    severe_accidents = sum(severe, na.rm = TRUE),
-    severe_percent = mean(severe, na.rm = TRUE) * 100
-  )
-
-acc %>%
-  filter(!is.na(Weather_Condition)) %>%
-  count(Weather_Condition, sort = TRUE) %>%
-  slice_head(n = 12) %>%
-  ggplot(
-    aes(x = reorder(Weather_Condition, n), y = n)
-  ) +
-  geom_col(fill = "steelblue") +
-  coord_flip() +
-  labs(
-    title = "Most Common Weather Conditions During Accidents",
-    x = "Weather Condition",
-    y = "Number of Accidents"
-  )
-
-weather_summary <- acc %>%
-  filter(
-    !is.na(Weather_Condition),
-    !is.na(Severity)
-  ) %>%
-  group_by(Weather_Condition) %>%
-  summarise(
-    accidents = n(),
-    severe_percent = mean(Severity >= 3) * 100,
-    .groups = "drop"
-  ) %>%
-  filter(accidents >= 100) %>%
-  arrange(desc(severe_percent))
-
-weather_summary %>%
-  ggplot(
-    aes(
-      x = reorder(Weather_Condition, severe_percent),
-      y = severe_percent
-    )
-  ) +
-  geom_col(fill = "firebrick") +
-  coord_flip() +
-  labs(
-    title = "Percentage of Severe Accidents by Weather",
-    subtitle = "Conditions with at least 100 recorded accidents",
-    x = "Weather Condition",
-    y = "Severe Accidents (%)"
-  )
-
-road_features <- c(
-  "Junction",
-  "Crossing",
-  "Traffic_Signal",
-  "Stop",
-  "Railway",
-  "Traffic_Calming",
-  "Roundabout",
-  "Give_Way",
-  "Amenity",
-  "Bump",
-  "No_Exit",
-  "Turning_Loop",
-  "Station"
-)
-
-road_summary <- acc %>%
-  select(Severity, all_of(road_features)) %>%
-  pivot_longer(
-    cols = all_of(road_features),
-    names_to = "road_feature",
-    values_to = "present"
-  ) %>%
-  filter(!is.na(present), !is.na(Severity)) %>%
-  group_by(road_feature, present) %>%
-  summarise(
-    accidents = n(),
-    severe_percent = mean(Severity >= 3) * 100,
-    .groups = "drop"
-  )
-
-ggplot(
-  road_summary,
-  aes(
-    x = road_feature,
-    y = severe_percent,
-    fill = factor(present)
-  )
-) +
-  geom_col(position = "dodge") +
-  coord_flip() +
-  labs(
-    title = "Accident Severity by Road Feature",
-    x = "Road Feature",
-    y = "Severe Accidents (%)",
-    fill = "Feature Present"
-  )
-
-
+# Severe Accident Counts by County
 
 county_summary <- acc %>%
   filter(!is.na(County)) %>%
   group_by(County) %>%
   summarise(
-    accidents = n(),
-    severe_accidents = sum(severe, na.rm = TRUE),
-    severe_percent = mean(severe, na.rm = TRUE) * 100,
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  arrange(desc(accidents))
+  arrange(desc(severe_accidents))
 
 county_summary %>%
-  slice_head(n = 15) %>%
+  slice_head(n = 5) %>%
   ggplot(
-    aes(x = reorder(County, accidents), y = accidents)
+    aes(x = reorder(County, severe_accidents),
+        y = severe_accidents)
   ) +
+  geom_col(fill = "firebrick") +
+  coord_flip() +
+  labs(
+    title = "Top 5 Virginia Counties by Severe Accident Counts",
+    x = "County",
+    y = "Number of Severe Accidents"
+  ) 
+
+# Severe Accidents to Population Ratio by County
+
+county_summary_p <- acc %>%
+  filter(!is.na(County)) %>%
+  group_by(County) %>%
+  summarise(
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    population = first(population),
+    severe_ratio = severe_accidents / population,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(severe_accidents))
+
+county_summary_p %>%
+  slice_head(n = 5) %>%
+  ggplot(
+    aes(x = reorder(County, severe_ratio),
+        y = severe_ratio)
+  ) +
+  geom_col(fill = "firebrick") +
+  coord_flip() +
+  labs(
+    title = "Top 5 Virginia Counties by Severe Accident to Population Ratio",
+    x = "County",
+    y = "Severe Accident to Population Ratio"
+  ) 
+
+# Severe Weather Conditions Percentage
+
+weather_summary <- acc %>%
+  filter(!is.na(Weather_Condition)) %>%
+  group_by(Weather_Condition) %>%
+  summarise(
+    total_accidents = n(),
+    severe_accidents = sum(severe, na.rm = TRUE),
+    severe_percent = severe_accidents / total_accidents * 100,
+    .groups = "drop"
+  ) %>%
+  filter(total_accidents >= 30) %>%
+  slice_max(severe_percent, n = 10)
+
+ggplot(
+  weather_summary,
+  aes(x = reorder(Weather_Condition, severe_percent),
+      y = severe_percent)
+) +
   geom_col(fill = "darkslateblue") +
   coord_flip() +
   labs(
-    title = "Virginia Counties with the Most Recorded Accidents",
-    x = "County",
-    y = "Number of Accidents"
-  ) 
+    title = "Top Weather Conditions Associated with Severe Accidents",
+    x = "Weather Condition",
+    y = "Severe Accidents (%)"
+  )
+
 ```
 
 
@@ -560,6 +497,8 @@ county_summary %>%
 |Full check was taking a while to render so wanted to look into whether there was a simpler easier method| Gemini Pro 10/29/26| AI taught me how I could simplify the corrupt data frames and data itself so the validations run on a smaller subset|Used the AI provided Code|Ran Successfully|None|
 |Join and normalize Virginia traffic accident data with U.S. Census population totals in R|Gemini Pro, October 29, 2026|Developed tidyverse and Base R scripts to download Census data, harmonize Virginia's independent city vs. county naming collisions, and perform a spatial (sf/tigris) vs. text geocoding audit.|	User provided dataset structure context, screenshot evidence of (city) formatting and James City/Charles City errors, and a spatial mismatch audit table, driving iterative regex and rule refinement.|AI utilized the ds_python_interpreter to mathematically verify the row sums (1,737 rows) and bidirectional highway border splits from the user's uploaded mismatch screenshot.|Inherent dataset geocoding biases remain: mailing address bleed (e.g., Fairfax accidents labeled Alexandria), enclave city misattribution (Salem vs. Roanoke County), and lack of adjustment for commuter/through-traffic volume.|
 Forgot how to coerce time variables to non-character in R|Gemini Pro 11/1/2026|Suggested the code in my timing check|Used as stated in the AI|Verification in part conducted with generating corrupt data to make sure the check worked.|NA|
+
+|Used AI to include population in graphs|ChatGPT November 2026|Ai included `population = first(population)`|NA|Copied the code and it worked. |NA|
 
 # Individual Tracker
 
