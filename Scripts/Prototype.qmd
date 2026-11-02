@@ -399,6 +399,12 @@ c(passes_original        = !inherits(try(check_timing(dfva_joined),
 ## The Question We Are Investigating From M1
 Which five Virginia counties experience the highest frequency of severe traffic accidents, and which weather conditions are most strongly related to these severe accidents? 
 
+**The estimand. What quantity your artifact actually reports, and what it does not identify.**
+
+Our artifact reports the top five counties with the most severe accidents, the top five counties with the highest severe accidents to population ratio, and the top ten weather conditions with the highest severe accidents to total accidents percentage. It does not identify whether the accidents are related to time variables or in/out of state residents. It also does not report the top weather conditions by county for severe accidents. 
+
+We plan to use these graphs to create the first page of a dashboard. The purpose of this page is to give the governor an immediate understanding of the worst effected counties. We also plan to have this page have a map of Virginia with the worst effected counties filtered by year. Later pages will include a more in depth look at each individual county. Each in depth look will investigate different conditions related to severe accidents. 
+
 ```{r graphs_and_charts}
 ###---------------------- Graphing
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
@@ -500,12 +506,25 @@ ggplot(
 |Join and normalize Virginia traffic accident data with U.S. Census population totals in R|Gemini Pro, October 29, 2026|Developed tidyverse and Base R scripts to download Census data, harmonize Virginia's independent city vs. county naming collisions, and perform a spatial (sf/tigris) vs. text geocoding audit.|	User provided dataset structure context, screenshot evidence of (city) formatting and James City/Charles City errors, and a spatial mismatch audit table, driving iterative regex and rule refinement.|AI utilized the ds_python_interpreter to mathematically verify the row sums (1,737 rows) and bidirectional highway border splits from the user's uploaded mismatch screenshot.|Inherent dataset geocoding biases remain: mailing address bleed (e.g., Fairfax accidents labeled Alexandria), enclave city misattribution (Salem vs. Roanoke County), and lack of adjustment for commuter/through-traffic volume.|
 Forgot how to coerce time variables to non-character in R|Gemini Pro 11/1/2026|Suggested the code in my timing check|Used as stated in the AI|Verification in part conducted with generating corrupt data to make sure the check worked.|NA|
 
-|Used AI to include population in graphs|ChatGPT November 2026|Ai included `population = first(population)`|NA|Copied the code and it worked. |NA|
+|Used AI to include population in graphs|ChatGPT November 2026|Ai included `population = first(population)` AI Output: Fix
+If you want one row per county, use:
+county_summary_p <- acc %>%
+  filter(!is.na(County)) %>%
+  group_by(County) %>%
+  summarise(
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    population = first(population),
+    severe_ratio = severe_accidents / population,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(severe_accidents))|NA|Copied the code and it worked. |NA|
 
 # Individual Tracker
 
 | Date | Who Did It | What Was Produced | How Was It Verified |
 |---|---|---|---|---|---|
-|10/29/2026|Matthew|Created QMD|---|
-|10/28/2026|Matthew|Created Validation Checks|---|
-|10/27/2026|Matthew|Joined Dataset to US Census Bureau|---|
+|10/29/2026|Matthew|Created QMD|We reviewed it together|
+|10/28/2026|Matthew|Created Validation Checks|We reviewed it together|
+|10/27/2026|Matthew|Joined Dataset to US Census Bureau|We reviewed it together|
+|10/30/2026|Maria|Created Graphs|We reviewed it together|
+|11/2/2026|Maria|Included Graphs on QMD|We reviewed it together|
