@@ -30,6 +30,13 @@ options(tigris_use_cache = TRUE)
 ```
 ## How to correctly download the initial data.
 
+**Data Costs:**
+*   **Download Size:** ~653 MB (ZIP file)
+*   **Extracted Size:** ~2.84 GB (CSV file)
+*   **Time Cost (extraction and render/run):** ~2–4 minutes (depending on internet speed and extraction time).
+*   **Location URL:**  https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
+*   **Location to Save:** create a folder called Data and place this document there.
+
 To correctly generate the initial data set to use in the follow up charts and graphs follow these directions.
 
 1. Create a folder called Data and a Folder Called Scripts.
@@ -49,6 +56,12 @@ The below code extracts from the full data set file those rows that have the val
 
 ```{r generate_initial_VAdataset}
 #| eval: true
+
+# Stop with a clear message if the raw file is absent
+if (!file.exists("../Data/US_Accidents_March23.csv")) {
+  stop("Source file missing. Please download US_Accidents_March23.csv (~2.84GB) from the Kaggle link in the instructions and place it in the Data folder.")
+}
+
 # Bring Full table in
 dffull <- fread("../Data/US_Accidents_March23.csv") %>%
   as_tibble()
