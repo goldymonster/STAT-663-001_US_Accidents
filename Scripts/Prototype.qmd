@@ -6,6 +6,10 @@ date: today
 ---
 # Initial Generation of the Virginia Dataset.
 
+**M1 Question 1: A prototype that renders or runs from a clean checkout. Not “works on my laptop.” Copy your project into a new, empty folder, follow only your own written instructions, and run it. Document the data access and environment steps you actually needed. If it does not run, that is the finding — report the blocker rather than describing the version that works on your machine. A prototype does not have to be complete or interactive. It has to run somewhere other than where it was written. The medium is still yours to choose: M2 asks whether what you have runs, not whether it is the form you will ship.**
+
+We both individually checked this from a clean session and following directions it worked fine.
+
 ## Install Dependencies
 
 This code requires the following packages to run successfully: tidyverse, data.table, sf, tigris.
@@ -30,6 +34,14 @@ options(tigris_use_cache = TRUE)
 ```
 ## How to correctly download the initial data.
 
+**Data Costs:**
+**Download Size:** ~653 MB (ZIP file)
+**Extracted Size:** ~2.84 GB (CSV file)
+**Time Cost (extraction and a full render/run):** ~2–4 minutes (depending on internet speed and extraction time).
+**Location URL:**  https://www.kaggle.com/datasets/sobhanmoosavi/us-accidents?resource=download
+**Location to Save:** create a folder called Data and place this document there.
+**Todo before Run:** In the first code chunk make eval: false into eval: true to download the full initial file. Then turn back to false.
+
 To correctly generate the initial data set to use in the follow up charts and graphs follow these directions.
 
 1. Create a folder called Data and a Folder Called Scripts.
@@ -49,6 +61,12 @@ The below code extracts from the full data set file those rows that have the val
 
 ```{r generate_initial_VAdataset}
 #| eval: true
+
+# Stop with a clear message if the raw file is absent
+if (!file.exists("../Data/US_Accidents_March23.csv")) {
+  stop("Source file missing. Please download US_Accidents_March23.csv (~2.84GB) from the Kaggle link in the instructions and place it in the Data folder.")
+}
+
 # Bring Full table in
 dffull <- fread("../Data/US_Accidents_March23.csv") %>%
   as_tibble()
@@ -287,21 +305,6 @@ mismatch_breakdown <- dfva_audit %>%
   count(County, City, text_assigned = census_key, 
         gps_assigned = spatial_key, sort = TRUE)
 
-# Summary Table Formulations -----
-dfva_county_summary <- dfva_joined %>%
-  group_by(GEOID, census_name, population) %>%
-  summarise(
-    total_accidents  = n(),
-    severe_accidents = sum(Severity >= 3, na.rm = TRUE),
-    avg_severity     = mean(Severity, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    accidents_per_person = total_accidents / population,
-    accidents_per_100k   = (total_accidents / population) * 100000,
-    severe_per_100k      = (severe_accidents / population) * 100000
-  ) %>%
-  arrange(desc(accidents_per_100k))
 
 ## Write the joined dataset
 # Save full row-level Virginia dataset with Census population attached
@@ -449,7 +452,9 @@ county_summary_p <- acc %>%
     severe_ratio = (severe_accidents / population) * 100000,
     .groups = "drop"
   ) %>%
-  arrange(desc(severe_ratio))
+  arrange(desc(severe_ratio))%>%
+  slice_max(severe_accidents, n=10)
+knitr::kable(county_summary_p, digits = 3)
 
 county_summary_p %>%
   slice_head(n = 5) %>%
