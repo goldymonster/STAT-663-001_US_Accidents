@@ -498,22 +498,33 @@ ggplot(
   )
 
 # Top 5 Counties with highest ratios plotted over time
+county_summary_p <- acc %>%
+  filter(!is.na(census_name)) %>%
+  group_by(census_name) %>%
+  summarise(
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    population = first(population),
+    severe_ratio = (severe_accidents / population) * 100000,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(severe_ratio))
+
 
 top_5_counties <- county_summary_p %>%
   slice_max(severe_ratio, n = 5) %>%
-  pull(County)
+  pull(census_name)
 
 
 county_monthly <- acc %>%
   filter(
-    County %in% top_5_counties,
+    census_name %in% top_5_counties,
     severe == TRUE,
     !is.na(Start_Time)
   ) %>%
   mutate(
     month = floor_date(as.POSIXct(Start_Time), "month")
   ) %>%
-  group_by(County, month) %>%
+  group_by(census_name, month) %>%
   summarise(
     severe_accidents = n(),
     .groups = "drop"
@@ -522,7 +533,7 @@ county_monthly <- acc %>%
 
 ggplot(
   county_monthly,
-  aes(x = month, y = severe_accidents, color = County)
+  aes(x = month, y = severe_accidents, color = census_name)
 ) +
   geom_line(linewidth = 1) +
   labs(
@@ -565,3 +576,4 @@ Forgot how to coerce time variables to non-character in R|Gemini Pro 11/1/2026|S
 |10/27/2026|Matthew|Joined Dataset to US Census Bureau|We reviewed it together|
 |10/30/2026|Maria|Created Graphs|We reviewed it together|
 |11/2/2026|Maria|Included Graphs on QMD|We reviewed it together|
+|11/3/2026|Maria|Included Time Series Graph on QMD|We reviewed it together|
