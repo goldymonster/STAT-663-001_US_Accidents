@@ -444,8 +444,8 @@ county_summary %>%
 # Severe Accidents to Population Ratio by County
 
 county_summary_p <- acc %>%
-  filter(!is.na(County)) %>%
-  group_by(County) %>%
+  filter(!is.na(census_name)) %>%
+  group_by(census_name) %>%
   summarise(
     severe_accidents = sum(severe == TRUE, na.rm = TRUE),
     population = first(population),
