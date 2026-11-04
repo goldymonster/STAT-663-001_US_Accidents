@@ -459,7 +459,7 @@ knitr::kable(county_summary_p, digits = 3)
 county_summary_p %>%
   slice_head(n = 5) %>%
   ggplot(
-    aes(x = reorder(County, severe_ratio),
+    aes(x = reorder(census_name, severe_ratio),
         y = severe_ratio)
   ) +
   geom_col(fill = "firebrick") +
