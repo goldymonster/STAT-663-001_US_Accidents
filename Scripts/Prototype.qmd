@@ -6,6 +6,10 @@ date: today
 ---
 # Initial Generation of the Virginia Dataset.
 
+**M1 Question 1: A prototype that renders or runs from a clean checkout. Not “works on my laptop.” Copy your project into a new, empty folder, follow only your own written instructions, and run it. Document the data access and environment steps you actually needed. If it does not run, that is the finding — report the blocker rather than describing the version that works on your machine. A prototype does not have to be complete or interactive. It has to run somewhere other than where it was written. The medium is still yours to choose: M2 asks whether what you have runs, not whether it is the form you will ship.**
+
+We both individually checked this from a clean session and following directions it worked fine.
+
 ## Install Dependencies
 
 This code requires the following packages to run successfully: tidyverse, data.table, sf, tigris.
