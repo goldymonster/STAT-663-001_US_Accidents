@@ -50,15 +50,19 @@ variancecounty <- dfva_joined %>%
   group_by(census_name, month_year) %>%
   summarise(
     severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    not_severe_accidents = sum(severe == FALSE, na.rm = TRUE),
     population = first(population),
+    accidents = n(),
     .groups = "drop"
   ) %>%
-  complete(census_name, month_year, fill = list(severe_accidents = 0)) %>%
+  complete(census_name, month_year, fill = list(severe_accidents = 0, not_severe_accidents = 0, accidents = 0)) %>%
   group_by(census_name) %>%
   fill(population, .direction = "downup") %>%
   ungroup() %>%
-  mutate(severe_ratio = (severe_accidents / population) * 100000) %>%
-  arrange(desc(population), month_year)
+  mutate(
+    severe_ratio = (severe_accidents / population) * 100000,
+    severe_rate = ifelse(accidents == 0, 0, severe_accidents / accidents)
+  ) %>% arrange(desc(population), month_year)
 
 # Top 10 counties by population
 top10_counties <- variancecounty %>%
@@ -87,7 +91,7 @@ CIPI <- variancecounty %>%
   group_by(census_name) %>%
   summarize(
     pop = first(population),
-    n = n(), 
+    n = sum(!is.na(severe_ratio) & !is.nan(severe_ratio)), 
     mean = mean(severe_ratio, na.rm = TRUE),
     variance = var(severe_ratio, na.rm = TRUE),
     stdev = sqrt(variance),
@@ -111,10 +115,48 @@ interval_chart <- ggplot(CIPI, aes(x = reorder(census_name, mean), y = mean)) +
   coord_flip() +
   theme_minimal() +
   labs(
-    title = "Traffic Accident Rates: Averages and Volatility",
+    title = "Traffic Accident Ratios: Averages and Volatility",
     subtitle = "95% Confidence Intervals of the top 10 Virginia Counties in Population",
     x = NULL,
     y = "Accidents per 100,000 Residents"
+  )
+
+interval_chart
+
+
+## Now doing for rate
+CIPIrate <- variancecounty %>%
+  group_by(census_name) %>%
+  summarize(
+    pop = first(population),
+    n = sum(!is.na(severe_rate) & !is.nan(severe_rate)), 
+    mean = mean(severe_rate, na.rm = TRUE),
+    variance = var(severe_rate, na.rm = TRUE),
+    stdev = sqrt(variance),
+    SE = stdev / sqrt(n),
+    t_val = qt(0.975, df = n - 1), 
+    ci_lower = mean - (t_val * SE),
+    ci_upper = mean + (t_val * SE),
+    pi_lower = mean - (t_val * stdev * sqrt(1 + (1/n))),
+    pi_upper = mean + (t_val * stdev * sqrt(1 + (1/n))),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(pop)) %>%
+  slice_head(n = 10)
+
+knitr::kable(CIPIrate, digits = 3)
+
+interval_chart <- ggplot(CIPIrate, aes(x = reorder(census_name, mean), y = mean)) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0, color = "steelblue", linewidth = 2) +
+  geom_point(color = "firebrick", size = 3) +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Traffic Accident Rates: Averages and Volatility",
+    subtitle = "95% Confidence Intervals of the top 10 Virginia Counties in Population",
+    x = NULL,
+    y = "Severe Accident Rate (Proportion of Total)"
   )
 
 interval_chart
