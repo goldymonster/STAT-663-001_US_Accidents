@@ -2,9 +2,9 @@ library(tidyverse)
 library(data.table)
 library(sf)
 library(tigris)
-library(lubridate) # Explicitly loading for floor_date (though tidyverse usually attaches it)
-
+library(lubridate) 
 options(tigris_use_cache = TRUE)
+
 setwd("C:/Users/mgold/Desktop/ClassMaterial/STAT663 Data Visualization/STAT-663-001_US_Accidents/Scripts")
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
 str(dfva_joined)
