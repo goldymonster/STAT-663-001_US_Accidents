@@ -28,8 +28,12 @@ county_summary_p <- dfva_joined %>%
   group_by(census_name) %>%
   summarise(
     severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    not_severe_accidents = sum(severe == FALSE, na.rm = TRUE),
     population = first(population),
     severe_ratio = (severe_accidents / population) * 100000,
+    accidents = n(),
+    severe_rate = severe_accidents/accidents,
+    not_severe_rate = not_severe_accidents/accidents,
     .groups = "drop"
   ) %>%
   arrange(desc(population)) %>%
