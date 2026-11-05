@@ -57,7 +57,7 @@ top10_counties <- variancecounty %>%
 variancecounty %>%
   filter(census_name %in% top10_counties) %>%
   ggplot(aes(
-    x = reorder(census_name, severe_ratio, median),
+    x = reorder(census_name, severe_ratio),
     y = severe_ratio
   )) +
   geom_boxplot() +
@@ -68,3 +68,46 @@ variancecounty %>%
   ) +
   coord_flip() +
   theme_minimal()
+
+
+CIPI<-variancecounty %>%
+  group_by(census_name) %>%
+  summarize(
+    pop = first(population),
+    n = n(), 
+    mean = mean(severe_ratio),
+    med = median(severe_ratio),
+    variance = var(severe_ratio),
+    stdev = sqrt(variance),
+    SE = stdev/sqrt(n),
+    ci_lower = mean - (SE * 1.96),
+    ci_upper = mean + (SE * 1.96),
+    pi_lower = mean - (stdev * sqrt(1+ (1/n))),
+    pi_upper = mean + (stdev * sqrt(1+ (1/n))),
+    medci_lower = med - (SE * 1.96),
+    medci_upper = med + (SE * 1.96),
+    medpi_lower = med - (stdev * sqrt(1+ (1/n))),
+    medpi_upper = med + (stdev * sqrt(1+ (1/n))),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(pop)) %>%
+  slice_head(n=10)
+
+knitr::kable(CIPI, digits = 3)
+
+
+interval_chart <- ggplot(CIPI, aes(x = reorder(census_name, mean), y = mean)) +
+  geom_errorbar(aes(ymin = pi_lower, ymax = pi_upper), 
+                width = 0, color = "gray60", size = 0.5) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width = 0, color = "steelblue", size = 2) +
+  geom_point(color = "firebrick", size = 3) +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Traffic Accident Rates: Averages and Volatility",
+    subtitle = "Thick line: 95% Confidence Interval. Thin line: 95% Prediction Interval",
+    x = NULL,
+    y = "Accidents per 10,000 Residents"
+  )
+interval_chart
