@@ -2,12 +2,15 @@ library(tidyverse)
 library(data.table)
 library(sf)
 library(tigris)
+library(lubridate) # Explicitly loading for floor_date (though tidyverse usually attaches it)
+
 options(tigris_use_cache = TRUE)
+setwd("C:/Users/mgold/Desktop/ClassMaterial/STAT663 Data Visualization/STAT-663-001_US_Accidents/Scripts")
 dfva_joined <- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
 str(dfva_joined)
-setwd("C:/Users/mgold/Desktop/ClassMaterial/STAT663 Data Visualization/STAT-663-001_US_Accidents/Scripts")
 
-dfva_joined$Start_Time<- as.POSIXct(
+# Format timestamps
+dfva_joined$Start_Time <- as.POSIXct(
   dfva_joined$Start_Time,
   format = "%Y-%m-%dT%H:%M:%OSZ",
   tz = "UTC"
@@ -15,11 +18,12 @@ dfva_joined$Start_Time<- as.POSIXct(
 dfva_joined$End_Time <- as.POSIXct(
   dfva_joined$End_Time,
   format = "%Y-%m-%dT%H:%M:%OSZ",
-  tz = "UTC")
+  tz = "UTC"
+)
 
 ## General Summary Table
 county_summary_p <- dfva_joined %>%
-  mutate(severe = Severity >= 3, year = year(Start_Time), month = month(Start_Time)) %>%
+  mutate(severe = Severity >= 3) %>%
   filter(!is.na(census_name)) %>%
   group_by(census_name) %>%
   summarise(
@@ -28,23 +32,29 @@ county_summary_p <- dfva_joined %>%
     severe_ratio = (severe_accidents / population) * 100000,
     .groups = "drop"
   ) %>%
-  arrange(desc(population))%>%
-  slice_max(population, n=10)
+  arrange(desc(population)) %>%
+  slice_max(population, n = 10)
+
 knitr::kable(county_summary_p, digits = 3)
 
-#Variance Table
 variancecounty <- dfva_joined %>%
-  mutate(severe = Severity >= 3, year = year(Start_Time), month = month(Start_Time)) %>%
+  mutate(
+    severe = Severity >= 3, 
+    month_year = floor_date(Start_Time, "month") 
+  ) %>%
   filter(!is.na(census_name)) %>%
-  mutate(year_month = paste(year, month, sep = "-")) %>%
-  group_by(census_name, year_month) %>%
+  group_by(census_name, month_year) %>%
   summarise(
     severe_accidents = sum(severe == TRUE, na.rm = TRUE),
     population = first(population),
-    severe_ratio = (severe_accidents / population) * 100000,
     .groups = "drop"
   ) %>%
-  arrange(desc(population))
+  complete(census_name, month_year, fill = list(severe_accidents = 0)) %>%
+  group_by(census_name) %>%
+  fill(population, .direction = "downup") %>%
+  ungroup() %>%
+  mutate(severe_ratio = (severe_accidents / population) * 100000) %>%
+  arrange(desc(population), month_year)
 
 # Top 10 counties by population
 top10_counties <- variancecounty %>%
@@ -69,17 +79,15 @@ variancecounty %>%
   coord_flip() +
   theme_minimal()
 
-
 CIPI <- variancecounty %>%
   group_by(census_name) %>%
   summarize(
     pop = first(population),
     n = n(), 
-    mean = mean(severe_ratio),
-    med = median(severe_ratio),
-    variance = var(severe_ratio),
+    mean = mean(severe_ratio, na.rm = TRUE),
+    variance = var(severe_ratio, na.rm = TRUE),
     stdev = sqrt(variance),
-    SE = stdev/sqrt(n),
+    SE = stdev / sqrt(n),
     t_val = qt(0.975, df = n - 1), 
     ci_lower = mean - (t_val * SE),
     ci_upper = mean + (t_val * SE),
@@ -88,23 +96,21 @@ CIPI <- variancecounty %>%
     .groups = "drop"
   ) %>%
   arrange(desc(pop)) %>%
-  slice_head(n=10)
+  slice_head(n = 10)
 
 knitr::kable(CIPI, digits = 3)
 
-
 interval_chart <- ggplot(CIPI, aes(x = reorder(census_name, mean), y = mean)) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
-                width = 0, color = "steelblue", size = 2) +
+                width = 0, color = "steelblue", linewidth = 2) +
   geom_point(color = "firebrick", size = 3) +
   coord_flip() +
   theme_minimal() +
   labs(
     title = "Traffic Accident Rates: Averages and Volatility",
-    subtitle = "95% Confidence Intervals of the top 10 Virginia County's in Population",
+    subtitle = "95% Confidence Intervals of the top 10 Virginia Counties in Population",
     x = NULL,
     y = "Accidents per 100,000 Residents"
   )
+
 interval_chart
-
-
