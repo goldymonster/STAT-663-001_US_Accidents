@@ -160,3 +160,37 @@ interval_chart <- ggplot(CIPIrate, aes(x = reorder(census_name, mean), y = mean)
   )
 
 interval_chart
+
+county_summary_weather <- dfva_joined %>%
+  mutate(severe = Severity >= 3) %>%
+  filter(!is.na(census_name)) %>%
+  group_by(census_name, Weather_Condition) %>%
+  summarise(
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    not_severe_accidents = sum(severe == FALSE, na.rm = TRUE),
+    population = first(population),
+    severe_ratio = (severe_accidents / population) * 100000,
+    accidents = n(),
+    severe_rate = severe_accidents/accidents,
+    not_severe_rate = not_severe_accidents/accidents,
+    .groups = "drop"
+  )
+library("plotly")
+FairfaxWeather<- county_summary_weather %>%
+  filter(census_name == "Fairfax County", accidents >= 10) %>%
+  slice_max(severe_ratio, n=5)
+
+b<-ggplot(
+  FairfaxWeather,
+  aes(x = reorder(Weather_Condition, severe_ratio),
+      y = severe_ratio)
+) +
+  geom_col(fill = "darkslateblue") +
+  coord_flip() +
+  labs(
+    title = "Top Weather Conditions Associated with Fairfax Virginia",
+    x = "Weather Condition",
+    y = "Severe Ratio"
+  )
+
+ggplotly(b)
