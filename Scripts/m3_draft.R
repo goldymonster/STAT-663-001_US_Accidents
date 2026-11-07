@@ -56,6 +56,63 @@ ggplot(
     axis.text.y = element_text(size = 9)
   )
 
+county_summary_p <- acc %>%
+  filter(!is.na(census_name)) %>%
+  group_by(census_name) %>%
+  summarise(
+    severe_accidents = sum(severe == TRUE, na.rm = TRUE),
+    population = first(population),
+    severe_ratio = (severe_accidents / population) * 100000,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(severe_ratio))
+
+
+top_5_counties <- county_summary_p %>%
+  slice_max(severe_ratio, n = 5) %>%
+  pull(census_name)
+
+
+county_monthly <- acc %>%
+  filter(
+    census_name %in% top_5_counties,
+    severe == TRUE,
+    !is.na(Start_Time)
+  ) %>%
+  mutate(
+    month = floor_date(as.POSIXct(Start_Time), "month")
+  ) %>%
+  group_by(census_name, month) %>%
+  summarise(
+    severe_accidents = n(),
+    .groups = "drop"
+  )
+
+
+ts <- ggplot(
+  county_monthly,
+  aes(x = month, y = severe_accidents, color = census_name)
+) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Monthly Severe Traffic Accidents in Top 5 Virginia Counties",
+    subtitle = "Counties selected by highest severe accident-to-population ratios",
+    x = "Month",
+    y = "Number of Severe Accidents",
+    color = "County"
+  ) +
+  scale_x_datetime(
+    date_labels = "%b %Y",
+    date_breaks = "3 months"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+
+
+
 
 county_summary <- acc %>%
   filter(!is.na(County)) %>%
