@@ -1,3 +1,8 @@
+
+setwd("C:/Users/mgold/Desktop/ClassMaterial/STAT663 Data Visualization/STAT-663-001_US_Accidents/Scripts")
+acc<- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
+acc <- acc %>%
+  mutate(severe = Severity >= 3)
 weather_summary <- acc %>%
   filter(!is.na(Weather_Condition)) %>%
   group_by(Weather_Condition) %>%
@@ -24,7 +29,7 @@ weather_summary <- weather_summary %>%
 
 
 
-ggplot(
+SARWC <- ggplot(
   weather_summary,
   aes(
     x = reorder(Weather_Condition, severe_percent),
@@ -55,6 +60,7 @@ ggplot(
     plot.title = element_text(face = "bold"),
     axis.text.y = element_text(size = 9)
   )
+
 
 county_summary_p <- acc %>%
   filter(!is.na(census_name)) %>%
@@ -114,6 +120,8 @@ ts <- ggplot(
 
 
 
+SARWC
+
 county_summary <- acc %>%
   filter(!is.na(County)) %>%
   group_by(County) %>%
@@ -144,7 +152,7 @@ fairfax_boundary <- counties(
   filter(NAME == "Fairfax County") %>%
   st_transform(4326)
 
-leaflet(ff_accidents) %>%
+map<- leaflet(ff_accidents) %>%
   addTiles(
     urlTemplate = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -171,3 +179,5 @@ leaflet(ff_accidents) %>%
       "<br>Time:", Start_Time
     )
   )
+
+map
