@@ -92,7 +92,7 @@ fairfax_boundary <- counties(
   filter(NAME == "Fairfax County") %>%
   st_transform(4326)
 
-leaflet(ff_accidents) %>%
+map<- leaflet(ff_accidents) %>%
   addTiles(
     urlTemplate = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -119,3 +119,5 @@ leaflet(ff_accidents) %>%
       "<br>Time:", Start_Time
     )
   )
+
+map
