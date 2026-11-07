@@ -1,3 +1,8 @@
+
+setwd("C:/Users/mgold/Desktop/ClassMaterial/STAT663 Data Visualization/STAT-663-001_US_Accidents/Scripts")
+acc<- read.csv("../Data/Virginia_Accidents_With_Pop.csv")
+acc <- acc %>%
+  mutate(severe = Severity >= 3)
 weather_summary <- acc %>%
   filter(!is.na(Weather_Condition)) %>%
   group_by(Weather_Condition) %>%
@@ -24,7 +29,7 @@ weather_summary <- weather_summary %>%
 
 
 
-ggplot(
+SARWC <- ggplot(
   weather_summary,
   aes(
     x = reorder(Weather_Condition, severe_percent),
@@ -55,7 +60,7 @@ ggplot(
     plot.title = element_text(face = "bold"),
     axis.text.y = element_text(size = 9)
   )
-
+SARWC
 
 county_summary <- acc %>%
   filter(!is.na(County)) %>%
