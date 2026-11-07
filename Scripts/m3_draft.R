@@ -65,3 +65,52 @@ county_summary <- acc %>%
     .groups = "drop"
   ) %>%
   arrange(desc(severe_accidents))
+
+
+library(leaflet)
+library(tigris)
+library(sf)
+
+ff_accidents <- acc %>%
+  filter(
+    census_name == "Fairfax County",
+    Severity >= 3,
+    !is.na(Start_Lat),
+    !is.na(Start_Lng)
+  )
+
+fairfax_boundary <- counties(
+  state = "VA",
+  cb = TRUE,
+  year = 2024
+) %>%
+  filter(NAME == "Fairfax County") %>%
+  st_transform(4326)
+
+leaflet(ff_accidents) %>%
+  addTiles(
+    urlTemplate = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  ) %>%
+  addPolygons(
+    data = fairfax_boundary,
+    fill = FALSE,
+    color = "black",
+    weight = 3,
+    opacity = 1,
+    group = "County Boundary"
+  ) %>%
+  addCircleMarkers(
+    lng = ~Start_Lng,
+    lat = ~Start_Lat,
+    radius = 3,
+    color = "red",
+    fillOpacity = 0.6,
+    stroke = FALSE,
+    popup = ~paste(
+      "County:", County,
+      "<br>Severity:", Severity,
+      "<br>Weather:", Weather_Condition,
+      "<br>Time:", Start_Time
+    )
+  )
