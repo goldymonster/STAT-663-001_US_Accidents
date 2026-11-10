@@ -146,7 +146,7 @@ CIPIrate <- variancecounty %>%
 
 knitr::kable(CIPIrate, digits = 3)
 
-interval_chart <- ggplot(CIPIrate, aes(x = reorder(census_name, mean), y = mean)) +
+interval_chart1 <- ggplot(CIPIrate, aes(x = reorder(census_name, mean), y = mean)) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
                 width = 0, color = "steelblue", linewidth = 2) +
   geom_point(color = "firebrick", size = 3) +
@@ -159,7 +159,7 @@ interval_chart <- ggplot(CIPIrate, aes(x = reorder(census_name, mean), y = mean)
     y = "Severe Accident Rate (Proportion of Total)"
   )
 
-interval_chart
+interval_chart1
 
 county_summary_weather <- dfva_joined %>%
   mutate(severe = Severity >= 3) %>%
