@@ -648,7 +648,7 @@ server <- function(input, output, session) {
   # ----------------------------------------------------------------------------
   top5_worst_excel_sheets <- reactive({
     # Filter by selected year on Page 1 (or all years)
-    df_ filtered <- if (input$p1_year == "All") {
+    df_filtered <- if (input$p1_year == "All") {
       acc
     } else {
       acc %>% filter(Year == as.numeric(input$p1_year))
