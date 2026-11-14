@@ -27,7 +27,10 @@ options(tigris_use_cache = TRUE)
 data_paths <- c(
   "../Data/Virginia_Accidents_With_Pop.csv",
   "Data/Virginia_Accidents_With_Pop.csv",
-  "Virginia_Accidents_With_Pop.csv"
+  "Virginia_Accidents_With_Pop.csv",
+  "../Data/SmallerExtractVAPop.csv",
+  "Data/SmallerExtractVAPop.csv",
+  "SmallerExtractVAPop.csv"
 )
 
 existing_path <- data_paths[file.exists(data_paths)][1]
@@ -59,6 +62,7 @@ acc <- acc_raw %>%
   mutate(
     Start_Time        = ymd_hms(Start_Time, tz = "UTC", quiet = TRUE),
     End_Time          = ymd_hms(End_Time, tz = "UTC", quiet = TRUE),
+    Accident_Date     = as.Date(Start_Time),
     Year              = year(Start_Time),
     month_year        = floor_date(Start_Time, unit = "month"),
     severe            = Severity >= 3,
@@ -66,11 +70,15 @@ acc <- acc_raw %>%
     Weather_Condition = str_squish(Weather_Condition),
     Weather_Category  = classify_weather_simple(Weather_Condition),
     Street            = str_squish(Street),
+    City              = str_squish(coalesce(City, "")),
     census_name       = str_squish(census_name)
   ) %>%
   filter(!is.na(census_name), !is.na(Severity), !is.na(Year))
 
-# Pre-compute static county population & statewide accident summary for the VA map
+min_acc_date <- min(acc$Accident_Date, na.rm = TRUE)
+max_acc_date <- max(acc$Accident_Date, na.rm = TRUE)
+
+# Pre-compute static county population & statewide accident summary
 county_pop_ranks <- acc %>%
   group_by(GEOID, census_name) %>%
   summarise(
@@ -95,18 +103,12 @@ bottom5_pop_names <- county_pop_ranks %>% slice_tail(n = 5) %>% pull(census_name
 all_years    <- sort(unique(acc$Year))
 all_counties <- county_pop_ranks$census_name
 
-# Load all 133 Virginia county/city boundaries and join county summary metrics
-va_boundaries <- tryCatch({
+# Load all 133 Virginia county/city boundaries
+va_boundaries_raw <- tryCatch({
   counties(state = "VA", cb = TRUE, year = 2022, progress_bar = FALSE) %>%
     st_transform(4326) %>%
-    left_join(county_pop_ranks, by = "GEOID") %>%
-    mutate(
-      display_name     = coalesce(census_name, NAMELSAD, NAME),
-      total_accidents  = replace_na(total_accidents, 0L),
-      severe_accidents = replace_na(severe_accidents, 0L),
-      severe_rate      = replace_na(severe_rate, 0),
-      severe_ratio     = replace_na(severe_ratio, 0)
-    )
+    left_join(county_pop_ranks %>% select(GEOID, census_name, population), by = "GEOID") %>%
+    mutate(display_name = coalesce(census_name, NAMELSAD, NAME))
 }, error = function(e) {
   NULL
 })
@@ -296,26 +298,11 @@ ui <- page_navbar(
           "p1_ci_type",
           "4. Dedicated Confidence Interval View:",
           choices = c(
-            "Monthly Severe Ratio 95% CI (CIPI)"      = "CIPI",
-            "Monthly Severe Rate 95% CI (CIPIrate)"   = "CIPIrate",
-            "Weather Severe Rate Binomial CI (SARWC)" = "SARWC"
+            "Monthly Severe Ratio 95% CI"         = "monthly_ratio_ci",
+            "Monthly Severe Rate 95% CI"          = "monthly_rate_ci",
+            "Weather Severe Rate Binomial 95% CI" = "weather_binom_ci"
           ),
-          selected = "CIPI"
-        ),
-        radioButtons(
-          "p1_mult_method",
-          "5. Multiple Comparisons Adjustment (FWER = 5%):",
-          choices = c(
-            "Bonferroni Simultaneous (α / m)"        = "bonferroni",
-            "Šidák Simultaneous (1 - (1 - α)^(1/m))" = "sidak",
-            "Unadjusted Marginal (α = 0.05)"         = "none"
-          ),
-          selected = "bonferroni"
-        ),
-        sliderInput(
-          "p1_min_weather_n",
-          "Min. Accidents per Weather Condition:",
-          min = 5, max = 100, value = 20, step = 5
+          selected = "monthly_ratio_ci"
         )
       ),
       
@@ -373,7 +360,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Filtered dynamically by the selected Population Tier and Year. Select 'SARWC' below to inspect simultaneous 95% CIs."
+            "Filtered dynamically by the selected Population Tier and Year (min. 20 accidents per weather condition). Select 'Weather Severe Rate Binomial 95% CI' below to inspect simultaneous 95% CIs."
           )
         )
       ),
@@ -396,7 +383,7 @@ ui <- page_navbar(
         ),
         card_footer(
           class = "text-muted small",
-          "Red diamond = Point Estimate (Monthly Average or Overall Rate); Blue horizontal bar = Simultaneous 95% Confidence Interval adjusted for multiple comparisons."
+          "Red diamond = Point Estimate (Monthly Average or Overall Rate); Blue horizontal bar = Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni)."
         )
       )
     )
@@ -419,17 +406,8 @@ ui <- page_navbar(
           selected = if ("Fairfax County" %in% all_counties) "Fairfax County" else all_counties[1]
         ),
         radioButtons(
-          "p2_weather_grouping",
-          "2. Weather Grouping Level:",
-          choices = c(
-            "5 Core Weather Categories (Best Sample Size n)" = "Weather_Category",
-            "Raw NOAA Weather Strings (Only High-n Shown)"   = "Weather_Condition"
-          ),
-          selected = "Weather_Category"
-        ),
-        radioButtons(
           "p2_ts_metric",
-          "3. Time Series Metric (Plot ts):",
+          "2. Time Series Metric (Plot ts):",
           choices = c(
             "Monthly Severe Accident Count (Poisson CI)" = "count",
             "Monthly Severe Rate % (Binomial CI)"        = "rate"
@@ -438,7 +416,7 @@ ui <- page_navbar(
         ),
         radioButtons(
           "p2_weather_metric",
-          "4. Weather Bar Chart & 95% CI Metric:",
+          "3. Weather Bar Chart & 95% CI Metric:",
           choices = c(
             "Severe Rate (% of Accidents in Weather)"  = "severe_rate",
             "Severe Ratio (per 100k County Residents)" = "severe_ratio"
@@ -446,31 +424,10 @@ ui <- page_navbar(
           selected = "severe_rate"
         ),
         hr(),
-        radioButtons(
-          "p2_mult_method",
-          "5. Multiple Comparisons Adjustment (FWER = 5%):",
-          choices = c(
-            "Bonferroni Simultaneous (α / m)"        = "bonferroni",
-            "Šidák Simultaneous (1 - (1 - α)^(1/m))" = "sidak",
-            "Unadjusted Marginal (α = 0.05)"         = "none"
-          ),
-          selected = "bonferroni"
-        ),
-        sliderInput(
-          "p2_min_monthly_acc",
-          "Min. Accidents in a Month to Count as a Valid Month:",
-          min = 1, max = 15, value = 5, step = 1
-        ),
-        sliderInput(
-          "p2_min_months",
-          "Min. Valid Months Required per Weather Bar (n):",
-          min = 5, max = 30, value = 10, step = 1
-        ),
-        hr(),
         tags$small(
           class = "text-muted",
           bs_icon("check-circle"),
-          " Simple Rule: Only months with at least 5 accidents are averaged, and only weather types with at least 10 such months are plotted. This keeps the standard Average ± Margin of Error (95% CI) simple, accurate, and easy to explain."
+          " Simple Rule: Weather conditions are grouped into the 5 Core Weather Categories. Only months with at least 5 accidents are averaged, and only weather categories with at least 10 such months are plotted. This keeps the standard Average ± Margin of Error (Bonferroni 95% CI) simple, accurate, and easy to explain."
         )
       ),
       
@@ -512,7 +469,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Shaded ribbon shows simultaneous 95% confidence intervals surrounding each month."
+            "Shaded ribbon shows simultaneous 95% confidence intervals (Bonferroni) surrounding each month."
           )
         ),
         card(
@@ -527,7 +484,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Clean bar chart (Plot 'b') of top weather conditions in the selected locality without overlapping error bars."
+            "Clean bar chart (Plot 'b') of the 5 Core Weather Categories in the selected locality without overlapping error bars."
           )
         )
       ),
@@ -550,7 +507,7 @@ ui <- page_navbar(
         ),
         card_footer(
           class = "text-muted small",
-          "How to read this chart: For each weather type with at least n qualifying months, the red diamond is the simple monthly average (Mean) and the blue horizontal bar is the Simultaneous 95% Confidence Interval (Mean ± t * SE)."
+          "How to read this chart: For each core weather category with at least n = 10 qualifying months, the red diamond is the simple monthly average (Mean) and the blue horizontal bar is the Simultaneous 95% Confidence Interval (Mean ± t * SE, Bonferroni-adjusted)."
         )
       ),
       
@@ -558,7 +515,7 @@ ui <- page_navbar(
         full_screen = TRUE,
         card_header(
           class = "bg-secondary text-white",
-          "Complete County Summary Table: Counts, Qualifying Months, Severe Rates, and Per-Capita Ratios by Weather"
+          "Complete County Summary Table: Counts, Qualifying Months, Severe Rates, and Per-Capita Ratios by Core Weather Category"
         ),
         card_body(
           DTOutput("p2_summary_table")
@@ -584,7 +541,7 @@ ui <- page_navbar(
   ),
   
   # ============================================================================
-  # PAGE 3: INTERACTIVE VIRGINIA & COUNTY STREET HOTSPOT GIS MAP
+  # PAGE 3: INTERACTIVE VIRGINIA COUNTY RATE & STREET ZONE HOTSPOT GIS MAP
   # ============================================================================
   nav_panel(
     title = "3. Virginia & Street Hotspot GIS Map",
@@ -596,8 +553,8 @@ ui <- page_navbar(
         selectInput(
           "p3_county",
           "1. Select Virginia Locality (or Click Map):",
-          choices = c("All Virginia (Statewide Overview)" = "ALL_VA", all_counties),
-          selected = if ("Fairfax County" %in% all_counties) "Fairfax County" else "ALL_VA"
+          choices = c("All Virginia (Statewide Rate Overview)" = "ALL_VA", all_counties),
+          selected = "ALL_VA"
         ),
         actionButton(
           "p3_reset_va",
@@ -605,40 +562,30 @@ ui <- page_navbar(
           icon = icon("globe-americas"),
           class = "btn-outline-primary w-100 mb-3"
         ),
-        radioButtons(
-          "p3_map_mode",
-          "2. County Detail Overlay:",
-          choices = c(
-            "Street-Level Hotspots (Grouped by Street)" = "streets",
-            "Individual Severe Accident Points"         = "points"
-          ),
-          selected = "streets"
+        hr(),
+        selectInput(
+          "p3_year",
+          "2. Analysis Year:",
+          choices = c("All Years (Full Date Range)" = "All", as.character(all_years)),
+          selected = "All"
         ),
-        radioButtons(
-          "p3_street_metric",
-          "3. Street Ranking & Color Metric:",
-          choices = c(
-            "Severe Accident Count (Volume Hotspot)"     = "severe_accidents",
-            "Severe Accident Rate (% Severe on Street)"  = "severe_rate",
-            "Severe Accidents per 100k County Residents" = "severe_ratio"
-          ),
-          selected = "severe_accidents"
-        ),
-        sliderInput(
-          "p3_min_street_n",
-          "Min. Total Accidents on Street:",
-          min = 1, max = 30, value = 3, step = 1
-        ),
-        sliderInput(
-          "p3_top_n_streets",
-          "Number of Top Streets to Display:",
-          min = 5, max = 100, value = 25, step = 5
+        dateRangeInput(
+          "p3_date_range",
+          "3. Custom Date Range:",
+          start = min_acc_date,
+          end   = max_acc_date,
+          min   = min_acc_date,
+          max   = max_acc_date
         ),
         hr(),
         tags$small(
           class = "text-muted",
-          bs_icon("hand-index-thumb"),
-          " Tip: Click any county directly on the Virginia map to zoom in and inspect its highest-risk streets, or use the accessible Street Table on the right for full keyboard and screen-reader access."
+          bs_icon("info-circle"),
+          " Workflow: ",
+          tags$br(),
+          "• ", tags$strong("Step 1 (Statewide View):"), " Inspect Virginia counties shaded by Severe Accident Rate (Severe / Total Accidents). Counties with <20 total crashes are dimmed in gray.",
+          tags$br(),
+          "• ", tags$strong("Step 2 (County Zone View):"), " Click any county on the map (or select above) to zoom in and view the Top 30 localized ~1 km street zones ranked by Severe Accident Count."
         )
       ),
       
@@ -651,7 +598,7 @@ ui <- page_navbar(
             textOutput("p3_map_title")
           ),
           card_body(
-            leafletOutput("p3_map", height = "540px"),
+            leafletOutput("p3_map", height = "560px"),
             uiOutput("p3_map_sr_summary")
           ),
           card_footer(
@@ -670,7 +617,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Non-interactive accessible path: Contains the exact street-level counts, rates, ratios, and simultaneous 95% binomial CIs plotted on the map."
+            textOutput("p3_table_footer")
           )
         )
       )
@@ -721,18 +668,18 @@ server <- function(input, output, session) {
     monthly_stats <- monthly_cnty %>%
       group_by(census_name) %>%
       summarise(
-        Total_Months_Observed      = n(),
-        Active_Months_With_Crashes = sum(accidents > 0, na.rm = TRUE),
-        Mean_Monthly_Total_Acc     = round(mean(accidents, na.rm = TRUE), 2),
-        Mean_Monthly_Severe_Acc    = round(mean(severe_accidents, na.rm = TRUE), 2),
-        Mean_Monthly_Severe_Ratio  = round(mean(severe_ratio, na.rm = TRUE), 2),
-        SE_Monthly_Ratio           = sd(severe_ratio, na.rm = TRUE) / sqrt(n()),
-        Monthly_Ratio_95CI_Low     = round(pmax(0, Mean_Monthly_Severe_Ratio - qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio), 2),
-        Monthly_Ratio_95CI_High    = round(Mean_Monthly_Severe_Ratio + qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio, 2),
+        Total_Months_Observed        = n(),
+        Active_Months_With_Crashes   = sum(accidents > 0, na.rm = TRUE),
+        Mean_Monthly_Total_Acc       = round(mean(accidents, na.rm = TRUE), 2),
+        Mean_Monthly_Severe_Acc      = round(mean(severe_accidents, na.rm = TRUE), 2),
+        Mean_Monthly_Severe_Ratio    = round(mean(severe_ratio, na.rm = TRUE), 2),
+        SE_Monthly_Ratio             = sd(severe_ratio, na.rm = TRUE) / sqrt(n()),
+        Monthly_Ratio_95CI_Low       = round(pmax(0, Mean_Monthly_Severe_Ratio - qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio), 2),
+        Monthly_Ratio_95CI_High      = round(Mean_Monthly_Severe_Ratio + qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio, 2),
         Mean_Monthly_Severe_Rate_Pct = round(mean(severe_rate, na.rm = TRUE) * 100, 2),
-        SE_Monthly_Rate            = sd(severe_rate, na.rm = TRUE) / sqrt(pmax(1, sum(!is.na(severe_rate)))),
-        Monthly_Rate_95CI_Low_Pct  = round(pmax(0, (mean(severe_rate, na.rm = TRUE) - qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
-        Monthly_Rate_95CI_High_Pct = round(pmin(100, (mean(severe_rate, na.rm = TRUE) + qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
+        SE_Monthly_Rate              = sd(severe_rate, na.rm = TRUE) / sqrt(pmax(1, sum(!is.na(severe_rate)))),
+        Monthly_Rate_95CI_Low_Pct    = round(pmax(0, (mean(severe_rate, na.rm = TRUE) - qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
+        Monthly_Rate_95CI_High_Pct   = round(pmin(100, (mean(severe_rate, na.rm = TRUE) + qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
         .groups = "drop"
       ) %>%
       select(-SE_Monthly_Ratio, -SE_Monthly_Rate)
@@ -751,9 +698,9 @@ server <- function(input, output, session) {
         by = "census_name"
       ) %>%
       mutate(
-        Total_Accidents          = replace_na(Total_Accidents, 0L),
-        Severe_Accidents         = replace_na(Severe_Accidents, 0L),
-        Overall_Severe_Rate_Pct  = round(ifelse(Total_Accidents > 0, (Severe_Accidents / Total_Accidents) * 100, 0), 2),
+        Total_Accidents           = replace_na(Total_Accidents, 0L),
+        Severe_Accidents          = replace_na(Severe_Accidents, 0L),
+        Overall_Severe_Rate_Pct   = round(ifelse(Total_Accidents > 0, (Severe_Accidents / Total_Accidents) * 100, 0), 2),
         Overall_Severe_Ratio_100k = round((Severe_Accidents / population) * 100000, 2)
       ) %>%
       left_join(monthly_stats, by = "census_name") %>%
@@ -790,7 +737,6 @@ server <- function(input, output, session) {
       if (requireNamespace("writexl", quietly = TRUE)) {
         writexl::write_xlsx(sheets, path = file)
       } else {
-        # Fallback if writexl is not installed: bind top 5 tables into a single CSV
         combined_csv <- bind_rows(
           sheets$Top5_By_Severe_Count,
           sheets$Top5_By_Severe_Ratio_100k,
@@ -898,9 +844,9 @@ server <- function(input, output, session) {
     df <- df %>%
       mutate(
         val_label = case_when(
-          input$p1_metric == "severe_rate"     ~ percent(severe_rate, accuracy = 0.1),
-          input$p1_metric == "severe_ratio"    ~ number(severe_ratio, accuracy = 0.1, big.mark = ","),
-          TRUE                                 ~ comma(total_accidents)
+          input$p1_metric == "severe_rate"  ~ percent(severe_rate, accuracy = 0.1),
+          input$p1_metric == "severe_ratio" ~ number(severe_ratio, accuracy = 0.1, big.mark = ","),
+          TRUE                              ~ comma(total_accidents)
         )
       )
     
@@ -976,6 +922,7 @@ server <- function(input, output, session) {
     render_a11y_box(msg, input$a11y_show_text)
   })
   
+  # Default minimum accidents per weather condition set to 20
   p1_weather_summary <- reactive({
     df <- p1_filtered_acc() %>%
       filter(!is.na(Weather_Condition), Weather_Condition != "") %>%
@@ -986,11 +933,11 @@ server <- function(input, output, session) {
         severe_percent   = severe_accidents / total_accidents,
         .groups = "drop"
       ) %>%
-      filter(total_accidents >= input$p1_min_weather_n) %>%
+      filter(total_accidents >= 20) %>%
       slice_max(severe_percent, n = 10)
     
     m_groups  <- max(1, nrow(df))
-    alpha_adj <- get_adjusted_alpha(m_groups, input$p1_mult_method, alpha = 0.05)
+    alpha_adj <- get_adjusted_alpha(m_groups, "bonferroni", alpha = 0.05)
     
     df %>%
       mutate(
@@ -1004,7 +951,7 @@ server <- function(input, output, session) {
   output$p1_weather_plot <- renderPlotly({
     df <- p1_weather_summary()
     validate(
-      need(nrow(df) > 0, "No weather conditions meet the minimum accident count threshold for this selection. Lower the threshold slider.")
+      need(nrow(df) > 0, "No weather conditions meet the minimum accident count threshold (20 accidents) for this selection.")
     )
     
     base_sz <- ifelse(isTRUE(input$a11y_high_contrast), 14, 12)
@@ -1060,7 +1007,7 @@ server <- function(input, output, session) {
     w2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
     
     msg <- paste0(
-      "Top weather conditions ranked by severe accident rate (minimum ", input$p1_min_weather_n, " accidents). ",
+      "Top weather conditions ranked by severe accident rate (minimum 20 accidents). ",
       "Rank 1 is ", w1$Weather_Condition, " at ", percent(w1$severe_percent, 0.1),
       " severe (", comma(w1$severe_accidents), " of ", comma(w1$total_accidents), " accidents, 95% CI: ",
       percent(w1$lower_ci, 0.1), " to ", percent(w1$upper_ci, 0.1), "). ",
@@ -1095,7 +1042,7 @@ server <- function(input, output, session) {
   })
   
   p1_ci_data <- reactive({
-    if (input$p1_ci_type == "SARWC") {
+    if (input$p1_ci_type == "weather_binom_ci") {
       df <- p1_weather_summary() %>%
         transmute(
           Group         = Weather_Condition,
@@ -1117,15 +1064,15 @@ server <- function(input, output, session) {
       monthly <- monthly %>% filter(census_name %in% top15_names)
     }
     
-    target_col <- ifelse(input$p1_ci_type == "CIPI", "severe_ratio", "severe_rate")
-    upper_cap  <- ifelse(input$p1_ci_type == "CIPI", Inf, 1.0)
+    target_col <- ifelse(input$p1_ci_type == "monthly_ratio_ci", "severe_ratio", "severe_rate")
+    upper_cap  <- ifelse(input$p1_ci_type == "monthly_ratio_ci", Inf, 1.0)
     
     compute_simple_ci(
       df          = monthly,
       group_col   = "census_name",
       value_col   = target_col,
       pop_col     = "population",
-      mult_method = input$p1_mult_method,
+      mult_method = "bonferroni",
       upper_cap   = upper_cap,
       min_months  = 6
     ) %>%
@@ -1136,14 +1083,14 @@ server <- function(input, output, session) {
     df <- p1_ci_data()
     m_val <- if (nrow(df) > 0) df$m_comparisons[1] else 1
     c_lvl <- if (nrow(df) > 0) percent(df$conf_level[1], accuracy = 0.01) else "95.0%"
-    method_name <- switch(
-      input$p1_mult_method,
-      "bonferroni" = "Bonferroni Simultaneous",
-      "sidak"      = "Šidák Simultaneous",
-      "none"       = "Unadjusted Marginal"
+    ci_label <- switch(
+      input$p1_ci_type,
+      "monthly_ratio_ci" = "Monthly Severe Ratio 95% CI",
+      "monthly_rate_ci"  = "Monthly Severe Rate 95% CI",
+      "weather_binom_ci" = "Weather Severe Rate Binomial 95% CI"
     )
     paste0(
-      "Dedicated 95% Confidence Interval Chart | ", method_name,
+      ci_label, " | Bonferroni Simultaneous",
       " (m = ", m_val, " comparisons, ", c_lvl, " individual interval level)"
     )
   })
@@ -1152,12 +1099,12 @@ server <- function(input, output, session) {
     df <- p1_ci_data()
     validate(need(nrow(df) > 0, "Insufficient data to compute confidence intervals."))
     
-    is_pct <- input$p1_ci_type %in% c("CIPIrate", "SARWC")
+    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
     y_lab  <- switch(
       input$p1_ci_type,
-      "CIPI"     = "Monthly Severe Accidents per 100k Residents (Mean ± 95% CI)",
-      "CIPIrate" = "Monthly Severe Accident Rate % (Mean ± 95% CI)",
-      "SARWC"    = "Weather Severe Accident Rate % (Simultaneous 95% Binomial CI)"
+      "monthly_ratio_ci" = "Monthly Severe Accidents per 100k Residents (Mean ± 95% CI)",
+      "monthly_rate_ci"  = "Monthly Severe Accident Rate % (Mean ± 95% CI)",
+      "weather_binom_ci" = "Weather Severe Accident Rate % (Simultaneous 95% Binomial CI)"
     )
     
     base_sz <- ifelse(isTRUE(input$a11y_high_contrast), 14, 12)
@@ -1198,7 +1145,7 @@ server <- function(input, output, session) {
   output$p1_ci_sr_summary <- renderUI({
     df <- p1_ci_data() %>% arrange(desc(Mean_Est))
     if (nrow(df) == 0) return(NULL)
-    is_pct <- input$p1_ci_type %in% c("CIPIrate", "SARWC")
+    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
     top_g <- df %>% slice(1)
     fmt <- function(v) if (is_pct) percent(v, 0.1) else round(v, 2)
     
@@ -1213,7 +1160,7 @@ server <- function(input, output, session) {
   
   output$p1_ci_table <- renderDT({
     df <- p1_ci_data()
-    is_pct <- input$p1_ci_type %in% c("CIPIrate", "SARWC")
+    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
     
     tbl <- df %>%
       select(Group, N_Units, Mean_Est, CI_Lower, CI_Upper)
@@ -1294,8 +1241,7 @@ server <- function(input, output, session) {
   })
   
   output$p2_weather_title <- renderText({
-    grp_label <- ifelse(input$p2_weather_grouping == "Weather_Category", "Core Weather Categories", "Weather Conditions")
-    paste0("Top ", grp_label, " Associated with Severe Accidents (Plot b): ", input$p2_county)
+    paste0("5 Core Weather Categories Associated with Severe Accidents (Plot b): ", input$p2_county)
   })
   
   p2_ts_computed <- reactive({
@@ -1314,7 +1260,7 @@ server <- function(input, output, session) {
       complete(month_year = all_months, fill = list(total_accidents = 0L, severe_accidents = 0L))
     
     m_months  <- max(1, nrow(ts_base))
-    alpha_adj <- get_adjusted_alpha(m_months, input$p2_mult_method, alpha = 0.05)
+    alpha_adj <- get_adjusted_alpha(m_months, "bonferroni", alpha = 0.05)
     c_level   <- 1 - alpha_adj
     
     ts_base %>%
@@ -1406,15 +1352,14 @@ server <- function(input, output, session) {
     render_a11y_box(msg, input$a11y_show_text)
   })
   
-  # Monthly Weather Table for Selected County:
+  # Monthly Weather Table for Selected County (5 Core Weather Categories, min. monthly accidents = 5):
   p2_qualified_monthly_weather <- reactive({
     df_county <- p2_county_acc() %>% filter(!is.na(month_year))
-    w_col     <- input$p2_weather_grouping
     cnty_pop  <- first(df_county$population)
     
     monthly_all <- df_county %>%
-      filter(!is.na(.data[[w_col]]), .data[[w_col]] != "") %>%
-      group_by(Weather_Group = .data[[w_col]], month_year) %>%
+      filter(!is.na(Weather_Category), Weather_Category != "") %>%
+      group_by(Weather_Group = Weather_Category, month_year) %>%
       summarise(
         severe_accidents = sum(severe, na.rm = TRUE),
         accidents        = n(),
@@ -1426,7 +1371,7 @@ server <- function(input, output, session) {
         severe_ratio = (severe_accidents / population) * 100000
       )
     
-    qual <- monthly_all %>% filter(accidents >= input$p2_min_monthly_acc)
+    qual <- monthly_all %>% filter(accidents >= 5)
     if (nrow(qual) < 5) {
       qual <- monthly_all %>% filter(accidents >= 2)
     }
@@ -1437,13 +1382,12 @@ server <- function(input, output, session) {
   })
   
   p2_weather_data <- reactive({
-    w_col <- input$p2_weather_grouping
     qual_counts <- p2_qualified_monthly_weather() %>%
       count(Weather_Group, name = "qualifying_months")
     
     df <- p2_county_acc() %>%
-      filter(!is.na(.data[[w_col]]), .data[[w_col]] != "") %>%
-      group_by(Weather_Group = .data[[w_col]]) %>%
+      filter(!is.na(Weather_Category), Weather_Category != "") %>%
+      group_by(Weather_Group = Weather_Category) %>%
       summarise(
         accidents            = n(),
         severe_accidents     = sum(severe, na.rm = TRUE),
@@ -1457,7 +1401,7 @@ server <- function(input, output, session) {
       mutate(qualifying_months = replace_na(qualifying_months, 0L))
     
     m_all     <- max(1, nrow(df))
-    alpha_adj <- get_adjusted_alpha(m_all, input$p2_mult_method, alpha = 0.05)
+    alpha_adj <- get_adjusted_alpha(m_all, "bonferroni", alpha = 0.05)
     
     df %>%
       mutate(
@@ -1466,9 +1410,10 @@ server <- function(input, output, session) {
       )
   })
   
+  # Default minimum qualifying months per weather bar set to 10
   output$p2_weather_plot <- renderPlotly({
     df <- p2_weather_data() %>%
-      filter(qualifying_months >= input$p2_min_months) %>%
+      filter(qualifying_months >= 10) %>%
       slice_max(.data[[input$p2_weather_metric]], n = 8)
     
     if (nrow(df) == 0) {
@@ -1542,13 +1487,18 @@ server <- function(input, output, session) {
   
   output$p2_weather_sr_summary <- renderUI({
     df <- p2_weather_data() %>%
-      filter(qualifying_months >= input$p2_min_months) %>%
+      filter(qualifying_months >= 10) %>%
       arrange(desc(.data[[input$p2_weather_metric]]))
+    if (nrow(df) == 0) {
+      df <- p2_weather_data() %>%
+        filter(qualifying_months >= 3) %>%
+        arrange(desc(.data[[input$p2_weather_metric]]))
+    }
     if (nrow(df) == 0) return(NULL)
     top_w <- df %>% slice(1)
     
     msg <- paste0(
-      "In ", input$p2_county, ", the top weather group by ", input$p2_weather_metric,
+      "In ", input$p2_county, ", the top core weather category by ", input$p2_weather_metric,
       " is ", top_w$Weather_Group, " with an overall severe rate of ",
       percent(top_w$severe_rate, 0.1), " and ", round(top_w$severe_ratio, 2),
       " cumulative severe accidents per 100k residents across ", top_w$qualifying_months, " qualifying months."
@@ -1568,9 +1518,9 @@ server <- function(input, output, session) {
       group_col   = "Weather_Group",
       value_col   = target_col,
       pop_col     = "population",
-      mult_method = input$p2_mult_method,
+      mult_method = "bonferroni",
       upper_cap   = upper_cap,
-      min_months  = input$p2_min_months
+      min_months  = 10
     ) %>%
       slice_max(Mean_Est, n = 8)
   })
@@ -1579,21 +1529,15 @@ server <- function(input, output, session) {
     df <- p2_ci_data()
     m_val <- if (nrow(df) > 0) df$m_comparisons[1] else 1
     c_lvl <- if (nrow(df) > 0) percent(df$conf_level[1], accuracy = 0.01) else "95.0%"
-    method_name <- switch(
-      input$p2_mult_method,
-      "bonferroni" = "Bonferroni Simultaneous",
-      "sidak"      = "Šidák Simultaneous",
-      "none"       = "Unadjusted Marginal"
-    )
     paste0(
-      "Monthly Weather 95% Confidence Intervals (Mean ± CI) in ", input$p2_county, " | ",
-      method_name, " (m = ", m_val, " groups, ", c_lvl, " level)"
+      "Monthly Core Weather Category 95% Confidence Intervals (Mean ± CI) in ", input$p2_county, " | ",
+      "Bonferroni Simultaneous (m = ", m_val, " groups, ", c_lvl, " level)"
     )
   })
   
   output$p2_ci_plot <- renderPlotly({
     df <- p2_ci_data()
-    validate(need(nrow(df) > 0, "No weather categories have enough qualifying months. Lower the slider on the left."))
+    validate(need(nrow(df) > 0, "No weather categories have enough qualifying months in this locality."))
     
     is_pct <- (input$p2_weather_metric == "severe_rate")
     y_lab  <- ifelse(
@@ -1665,9 +1609,9 @@ server <- function(input, output, session) {
       rownames = FALSE,
       caption = htmltools::tags$caption(
         style = "caption-side: top; font-weight: bold; color: #0F2042;",
-        paste0("Accessible Data Table: Monthly Weather Means & 95% CIs for ", input$p2_county)
+        paste0("Accessible Data Table: Monthly Core Weather Category Means & 95% CIs for ", input$p2_county)
       ),
-      colnames = c("Weather Category", "Qualifying Months (n)", "Monthly Mean", "Sim. 95% CI Low", "Sim. 95% CI High"),
+      colnames = c("Core Weather Category", "Qualifying Months (n)", "Monthly Mean", "Sim. 95% CI Low", "Sim. 95% CI High"),
       options = list(pageLength = 8, dom = "tip", scrollX = TRUE)
     )
     
@@ -1692,10 +1636,10 @@ server <- function(input, output, session) {
       rownames = FALSE,
       caption = htmltools::tags$caption(
         style = "caption-side: top; font-weight: bold; color: #0F2042;",
-        paste0("Complete Weather Breakdown for ", input$p2_county, " (Full Non-Interactive Reference Table)")
+        paste0("Complete Core Weather Category Breakdown for ", input$p2_county, " (Full Non-Interactive Reference Table)")
       ),
       colnames = c(
-        "Weather Category", "Qualifying Months (n)", "Total Accidents", "Severe Accidents",
+        "Core Weather Category", "Qualifying Months (n)", "Total Accidents", "Severe Accidents",
         "Non-Severe Accidents", "Overall Severe Rate (%)", "Sim. 95% CI Low",
         "Sim. 95% CI High", "Cumulative Severe Ratio (per 100k)"
       ),
@@ -1706,8 +1650,7 @@ server <- function(input, output, session) {
       formatCurrency(c("accidents", "severe_accidents", "not_severe_accidents"), currency = "", interval = 3, mark = ",", digits = 0)
   })
   
-  # Simple audit checks for the selected county. These test CI bounds and
-  # whether the displayed intervals contain their point estimates.
+  # Simple audit checks for the selected county
   p2_audit_results <- reactive({
     ts <- p2_ts_computed()
     weather <- p2_weather_data()
@@ -1807,10 +1750,7 @@ server <- function(input, output, session) {
   # ----------------------------------------------------------------------------
   # PAGE 2 EXCEL DOWNLOAD: CONFIDENCE INTERVALS & AUDIT STATUS
   # ----------------------------------------------------------------------------
-  
   page_status_excel_sheets <- reactive({
-    
-    # 1. Dashboard quality checks
     audit_checks <- tryCatch(
       p2_audit_results(),
       error = function(e) {
@@ -1822,7 +1762,6 @@ server <- function(input, output, session) {
       }
     )
     
-    # 2. Monthly weather confidence intervals
     monthly_weather_ci <- tryCatch(
       p2_ci_data(),
       error = function(e) {
@@ -1830,7 +1769,6 @@ server <- function(input, output, session) {
       }
     )
     
-    # 3. Monthly time-series confidence intervals
     monthly_time_series_ci <- tryCatch(
       p2_ts_computed(),
       error = function(e) {
@@ -1838,7 +1776,6 @@ server <- function(input, output, session) {
       }
     )
     
-    # 4. Weather binomial confidence intervals
     weather_binomial_ci <- tryCatch(
       p2_weather_data(),
       error = function(e) {
@@ -1846,7 +1783,6 @@ server <- function(input, output, session) {
       }
     )
     
-    # 5. Weather classification review
     weather_classification <- p2_county_acc() %>%
       filter(
         !is.na(Weather_Condition),
@@ -1870,7 +1806,6 @@ server <- function(input, output, session) {
       ) %>%
       arrange(desc(Check), desc(Accidents))
     
-    # 6. Selected dashboard settings
     export_settings <- tibble(
       Setting = c(
         "Selected County",
@@ -1881,19 +1816,17 @@ server <- function(input, output, session) {
         "Minimum Accidents per Month",
         "Minimum Qualifying Months"
       ),
-      
       Value = c(
         input$p2_county,
-        input$p2_weather_grouping,
+        "Weather_Category (5 Core Weather Categories)",
         input$p2_ts_metric,
         input$p2_weather_metric,
-        input$p2_mult_method,
-        as.character(input$p2_min_monthly_acc),
-        as.character(input$p2_min_months)
+        "bonferroni",
+        "5",
+        "10"
       )
     )
     
-    # Return all worksheets in one Excel workbook
     list(
       Page_Status = audit_checks,
       Monthly_Weather_CIs = monthly_weather_ci,
@@ -1904,20 +1837,13 @@ server <- function(input, output, session) {
     )
   })
   
-  
-  # ----------------------------------------------------------------------------
-  # DOWNLOAD BUTTON: PAGE 2 STATUS WORKBOOK
-  # ----------------------------------------------------------------------------
-  
   output$download_page_status <- downloadHandler(
-    
     filename = function() {
       county_name <- gsub(
         "[^A-Za-z0-9]+",
         "_",
         input$p2_county
       )
-      
       paste0(
         "Page_Status_",
         county_name,
@@ -1926,16 +1852,13 @@ server <- function(input, output, session) {
         ".xlsx"
       )
     },
-    
     content = function(file) {
-      
       if (!requireNamespace("writexl", quietly = TRUE)) {
         stop(
           "Please install writexl first using: ",
           "install.packages('writexl')"
         )
       }
-      
       writexl::write_xlsx(
         page_status_excel_sheets(),
         path = file
@@ -1944,7 +1867,7 @@ server <- function(input, output, session) {
   )
   
   # ----------------------------------------------------------------------------
-  # PAGE 3 SERVER: REAL VIRGINIA GIS MAP + CLICK-TO-SELECT COUNTY + STREETS
+  # PAGE 3 SERVER: STATEWIDE COUNTY SEVERE RATE MAP -> COUNTY STREET ZONES
   # ----------------------------------------------------------------------------
   observeEvent(input$p3_reset_va, {
     updateSelectInput(session, "p3_county", selected = "ALL_VA")
@@ -1957,43 +1880,124 @@ server <- function(input, output, session) {
     }
   })
   
-  p3_county_acc <- reactive({
-    if (input$p3_county == "ALL_VA") {
-      acc %>% filter(!is.na(Start_Lat), !is.na(Start_Lng))
+  # Sync Page 3 Date Range when Analysis Year changes
+  observeEvent(input$p3_year, {
+    if (input$p3_year == "All") {
+      updateDateRangeInput(
+        session,
+        "p3_date_range",
+        start = min_acc_date,
+        end   = max_acc_date
+      )
     } else {
-      acc %>% filter(census_name == input$p3_county, !is.na(Start_Lat), !is.na(Start_Lng))
+      yr_num <- as.numeric(input$p3_year)
+      yr_dates <- acc %>%
+        filter(Year == yr_num) %>%
+        pull(Accident_Date)
+      if (length(yr_dates) > 0) {
+        updateDateRangeInput(
+          session,
+          "p3_date_range",
+          start = min(yr_dates, na.rm = TRUE),
+          end   = max(yr_dates, na.rm = TRUE)
+        )
+      }
     }
+  }, ignoreInit = TRUE)
+  
+  # Filtered accidents by Page 3 Year & Date Range
+  p3_date_filtered_acc <- reactive({
+    df <- acc %>% filter(!is.na(Start_Lat), !is.na(Start_Lng))
+    if (!is.null(input$p3_date_range) && length(input$p3_date_range) == 2) {
+      df <- df %>%
+        filter(
+          Accident_Date >= as.Date(input$p3_date_range[1]),
+          Accident_Date <= as.Date(input$p3_date_range[2])
+        )
+    }
+    if (input$p3_year != "All") {
+      df <- df %>% filter(Year == as.numeric(input$p3_year))
+    }
+    df
   })
   
-  p3_street_summary <- reactive({
-    df_raw <- p3_county_acc() %>%
-      filter(!is.na(Street), Street != "")
+  # Statewide county-level severe accident rate summary for selected dates
+  p3_statewide_county_rates <- reactive({
+    df_acc <- p3_date_filtered_acc()
     
-    if (nrow(df_raw) == 0) return(tibble())
-    
-    grouped <- df_raw %>%
-      group_by(Street, census_name) %>%
+    agg <- df_acc %>%
+      group_by(census_name) %>%
       summarise(
         total_accidents  = n(),
         severe_accidents = sum(severe, na.rm = TRUE),
-        population       = first(population),
-        severe_rate      = severe_accidents / total_accidents,
-        severe_ratio     = (severe_accidents / population) * 100000,
-        lat              = median(Start_Lat, na.rm = TRUE),
-        lng              = median(Start_Lng, na.rm = TRUE),
         .groups = "drop"
       )
     
-    filtered <- grouped %>% filter(total_accidents >= input$p3_min_street_n)
+    cnty_df <- county_pop_ranks %>%
+      select(GEOID, census_name, population) %>%
+      left_join(agg, by = "census_name") %>%
+      mutate(
+        total_accidents   = replace_na(total_accidents, 0L),
+        severe_accidents  = replace_na(severe_accidents, 0L),
+        severe_rate       = ifelse(total_accidents > 0, severe_accidents / total_accidents, 0),
+        qualifies_rate    = total_accidents >= 20,
+        # Color scale uses severe_rate only for counties with >= 20 total crashes
+        severe_rate_map   = ifelse(qualifies_rate, severe_rate, NA_real_)
+      )
+    
+    m_cnty    <- max(1, sum(cnty_df$total_accidents > 0))
+    alpha_adj <- get_adjusted_alpha(m_cnty, "bonferroni", alpha = 0.05)
+    
+    cnty_df %>%
+      mutate(
+        rate_ci_low  = calc_binom_ci(severe_accidents, total_accidents, "lower", conf_level = 1 - alpha_adj),
+        rate_ci_high = calc_binom_ci(severe_accidents, total_accidents, "upper", conf_level = 1 - alpha_adj)
+      ) %>%
+      arrange(desc(qualifies_rate), desc(severe_rate), desc(severe_accidents))
+  })
+  
+  # Localized Street Zones (~1 km segments) inside the selected county
+  p3_street_zone_summary <- reactive({
+    req(input$p3_county != "ALL_VA")
+    df_raw <- p3_date_filtered_acc() %>%
+      filter(census_name == input$p3_county, !is.na(Street), Street != "")
+    
+    if (nrow(df_raw) == 0) return(tibble())
+    
+    # Group by Street + 0.01-degree (~1 km) coordinate grid to pinpoint specific zones
+    grouped <- df_raw %>%
+      mutate(
+        lat_zone = round(Start_Lat, 2),
+        lng_zone = round(Start_Lng, 2)
+      ) %>%
+      group_by(Street, census_name, lat_zone, lng_zone) %>%
+      summarise(
+        area_name        = first(City[City != ""]),
+        total_accidents  = n(),
+        severe_accidents = sum(severe, na.rm = TRUE),
+        severe_rate      = severe_accidents / total_accidents,
+        lat              = median(Start_Lat, na.rm = TRUE),
+        lng              = median(Start_Lng, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        area_label  = ifelse(!is.na(area_name) & area_name != "", paste0("near ", area_name), "Zone"),
+        Street_Zone = paste0(Street, " (", area_label, " [", sprintf("%.2f, %.2f", lat_zone, lng_zone), "])")
+      )
+    
+    # Require at least 3 crashes in a zone (fallback to all zones if rural county has few crashes)
+    filtered <- grouped %>% filter(total_accidents >= 3)
     if (nrow(filtered) == 0) {
       filtered <- grouped
     }
     
+    # Rank by Severe Accident Count (Volume) and keep Top 30 zones
     filtered <- filtered %>%
-      arrange(desc(.data[[input$p3_street_metric]]), desc(total_accidents))
+      arrange(desc(severe_accidents), desc(total_accidents), desc(severe_rate)) %>%
+      slice_head(n = 30)
     
-    m_streets <- max(1, min(nrow(filtered), input$p3_top_n_streets))
-    alpha_adj <- get_adjusted_alpha(m_streets, "bonferroni", alpha = 0.05)
+    m_zones   <- max(1, nrow(filtered))
+    alpha_adj <- get_adjusted_alpha(m_zones, "bonferroni", alpha = 0.05)
     
     filtered %>%
       mutate(
@@ -2004,28 +2008,36 @@ server <- function(input, output, session) {
   
   output$p3_map_title <- renderText({
     if (input$p3_county == "ALL_VA") {
-      "Commonwealth of Virginia: Statewide County Severity & Top Street Hotspots"
+      "Step 1 — Virginia Statewide Map: County Severe Accident Rate (Severe / Total Accidents)"
     } else {
-      paste0("Virginia GIS Map — Focused on: ", input$p3_county)
+      paste0("Step 2 — County Street Zone Hotspots: ", input$p3_county, " (Top 30 Localized Zones)")
     }
   })
   
   output$p3_map_subtitle <- renderText({
     if (input$p3_county == "ALL_VA") {
-      "Showing all 133 Virginia counties/cities shaded by Severe Accidents per 100k Residents. Click any county on the map to zoom in."
+      "Counties with ≥20 total crashes are shaded by Severe Accident Rate (%). Low-volume counties (<20 crashes) are dimmed in gray. Click any county to inspect its problem street zones."
     } else {
       paste0(
-        "Highlighted in crimson: ", input$p3_county,
-        " (surrounding Virginia counties remain visible for geographic context). Click any neighboring county to switch."
+        "Showing the Top 30 localized (~1 km) street zones in ", input$p3_county,
+        ". Circle color = Severe Accident Count; Circle size = Total Accidents in zone. Click 'Zoom Out to Full Virginia Map' to return."
       )
     }
   })
   
   output$p3_table_title <- renderText({
     if (input$p3_county == "ALL_VA") {
-      "Highest-Risk Streets Across All of Virginia"
+      "Statewide County Ranking by Severe Accident Rate (Severe / Total)"
     } else {
-      paste0("Highest-Risk Streets in ", input$p3_county, " (Grouped by Street)")
+      paste0("Top Localized Street Zones in ", input$p3_county, " (Ranked by Severe Accidents)")
+    }
+  })
+  
+  output$p3_table_footer <- renderText({
+    if (input$p3_county == "ALL_VA") {
+      "Accessible County Table: Lists county severe accident rates and Bonferroni simultaneous 95% binomial CIs. Counties with ≥20 total accidents are ranked first."
+    } else {
+      "Accessible Street Zone Table: Lists the exact ~1 km corridor zones, severe counts, total counts, severe rates, and Bonferroni simultaneous 95% binomial CIs."
     }
   })
   
@@ -2034,202 +2046,235 @@ server <- function(input, output, session) {
       addTiles(
         urlTemplate = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         attribution = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        group = "OpenStreetMap (Road Map)"
+        group = "Street Map"
       ) %>%
-      addProviderTiles(providers$Esri.WorldStreetMap, group = "Esri World Street Map") %>%
-      addProviderTiles(providers$Esri.WorldImagery, group = "Esri Satellite Imagery")
+      addProviderTiles(providers$Esri.WorldImagery, group = "Satellite Imagery")
     
-    if (!is.null(va_boundaries) && nrow(va_boundaries) > 0) {
+    cnty_rates <- p3_statewide_county_rates()
+    
+    if (!is.null(va_boundaries_raw) && nrow(va_boundaries_raw) > 0) {
+      va_map_df <- va_boundaries_raw %>%
+        left_join(
+          cnty_rates %>%
+            select(GEOID, total_accidents, severe_accidents, severe_rate, qualifies_rate, severe_rate_map, rate_ci_low, rate_ci_high),
+          by = "GEOID"
+        ) %>%
+        mutate(
+          total_accidents  = replace_na(total_accidents, 0L),
+          severe_accidents = replace_na(severe_accidents, 0L),
+          severe_rate      = replace_na(severe_rate, 0),
+          qualifies_rate   = replace_na(qualifies_rate, FALSE)
+        )
+      
+      rate_domain <- va_map_df$severe_rate_map[!is.na(va_map_df$severe_rate_map)]
+      if (length(rate_domain) == 0) rate_domain <- c(0, 1)
+      
       va_pal <- colorNumeric(
-        palette = "YlOrRd",
-        domain  = va_boundaries$severe_ratio
+        palette  = "YlOrRd",
+        domain   = rate_domain,
+        na.color = "#CBD5E1"
       )
       
       m <- m %>%
         addPolygons(
-          data        = va_boundaries,
+          data        = va_map_df,
           layerId     = ~display_name,
           group       = "Virginia Counties",
-          fillColor   = ~va_pal(severe_ratio),
-          fillOpacity = ifelse(input$p3_county == "ALL_VA", 0.55, 0.20),
+          fillColor   = ~va_pal(severe_rate_map),
+          fillOpacity = ifelse(input$p3_county == "ALL_VA", 0.68, 0.15),
           color       = "#334155",
           weight      = 1.2,
           opacity     = 0.85,
           highlightOptions = highlightOptions(
-            weight = 3,
-            color = exec_navy,
-            fillOpacity = 0.4,
+            weight       = 3,
+            color        = exec_navy,
+            fillOpacity  = ifelse(input$p3_county == "ALL_VA", 0.82, 0.30),
             bringToFront = FALSE
           ),
           label = ~paste0(
-            display_name, " | Severe/100k: ", round(severe_ratio, 1),
-            " (Severe: ", comma(severe_accidents), ")"
+            display_name, " | Severe Rate: ", percent(severe_rate, accuracy = 0.1),
+            " (", comma(severe_accidents), " severe / ", comma(total_accidents), " total)",
+            ifelse(qualifies_rate, "", " [Low volume: <20 crashes]")
           ),
           popup = ~paste0(
             "<b>Locality: </b>", display_name, "<br>",
-            "<b>Population: </b>", comma(population), "<br>",
-            "<b>Total Accidents: </b>", comma(total_accidents), "<br>",
+            "<b>Severe Accident Rate: </b>", percent(severe_rate, accuracy = 0.1),
+            ifelse(!is.na(rate_ci_low), paste0(" (95% CI: ", percent(rate_ci_low, 0.1), "–", percent(rate_ci_high, 0.1), ")"), ""), "<br>",
             "<b>Severe Accidents: </b>", comma(severe_accidents), "<br>",
-            "<b>Severe Rate: </b>", percent(severe_rate, accuracy = 0.1), "<br>",
-            "<b>Severe Ratio (per 100k): </b>", round(severe_ratio, 1)
+            "<b>Total Accidents: </b>", comma(total_accidents), "<br>",
+            "<b>Volume Status: </b>", ifelse(qualifies_rate, "Qualifies (≥20 total accidents)", "Low Sample Volume (<20 total accidents)")
           )
         )
-    }
-    
-    if (input$p3_county == "ALL_VA") {
-      m <- m %>% fitBounds(lng1 = -83.68, lat1 = 36.54, lng2 = -75.24, lat2 = 39.47)
-    } else if (!is.null(va_boundaries)) {
-      selected_poly <- va_boundaries %>% filter(display_name == input$p3_county)
-      if (nrow(selected_poly) > 0) {
-        bbox <- st_bbox(selected_poly)
-        m <- m %>%
-          addPolygons(
-            data        = selected_poly,
-            fill        = TRUE,
-            fillColor   = exec_crimson,
-            fillOpacity = 0.08,
-            color       = exec_crimson,
-            weight      = 4,
-            opacity     = 1.0,
-            group       = "Selected County Boundary"
-          ) %>%
-          fitBounds(
-            lng1 = as.numeric(bbox["xmin"]),
-            lat1 = as.numeric(bbox["ymin"]),
-            lng2 = as.numeric(bbox["xmax"]),
-            lat2 = as.numeric(bbox["ymax"])
-          )
-      }
-    }
-    
-    if (input$p3_map_mode == "streets") {
-      streets_df <- p3_street_summary() %>%
-        slice_head(n = input$p3_top_n_streets)
       
-      if (nrow(streets_df) > 0) {
-        pal <- colorNumeric(
-          palette = "plasma",
-          domain  = streets_df[[input$p3_street_metric]],
-          reverse = TRUE
-        )
-        
-        max_acc <- max(streets_df$total_accidents, 1)
-        radii   <- 6 + 14 * sqrt(streets_df$total_accidents / max_acc)
-        
+      if (input$p3_county == "ALL_VA") {
         m <- m %>%
-          addCircleMarkers(
-            data        = streets_df,
-            lng         = ~lng,
-            lat         = ~lat,
-            radius      = radii,
-            fillColor   = ~pal(streets_df[[input$p3_street_metric]]),
-            color       = "#1A202C",
-            weight      = 1.5,
-            fillOpacity = 0.90,
-            group       = "Street Hotspots",
-            label       = ~paste0(Street, " (", census_name, "): ", severe_accidents, " severe / ", total_accidents, " total"),
-            popup       = ~paste0(
-              "<b>Street: </b>", Street, "<br>",
-              "<b>Locality: </b>", census_name, "<br>",
-              "<b>Severe Accidents: </b>", comma(severe_accidents), "<br>",
-              "<b>Total Accidents: </b>", comma(total_accidents), "<br>",
-              "<b>Severe Rate: </b>", percent(severe_rate, accuracy = 0.1),
-              " (Sim. 95% CI: ", percent(rate_ci_low, 0.1), "–", percent(rate_ci_high, 0.1), ")<br>",
-              "<b>Severe Ratio (per 100k): </b>", round(severe_ratio, 2)
-            )
-          ) %>%
+          fitBounds(lng1 = -83.68, lat1 = 36.54, lng2 = -75.24, lat2 = 39.47) %>%
           addLegend(
-            position = "bottomright",
-            pal      = pal,
-            values   = streets_df[[input$p3_street_metric]],
-            title    = switch(
-              input$p3_street_metric,
-              "severe_accidents" = "Street Severe Count",
-              "severe_rate"      = "Street Severe Rate",
-              "severe_ratio"     = "Street Severe / 100k"
-            ),
-            opacity  = 0.90
+            position  = "bottomright",
+            pal       = va_pal,
+            values    = rate_domain,
+            title     = "County Severe Rate (%)<br><small>(Gray = <20 crashes)</small>",
+            labFormat = labelFormat(suffix = "%", transform = function(x) round(x * 100, 0)),
+            opacity   = 0.85
           )
-      }
-    } else {
-      sev_pts <- p3_county_acc() %>%
-        filter(severe) %>%
-        slice_head(n = 2500)
-      
-      if (nrow(sev_pts) > 0) {
-        m <- m %>%
-          addCircleMarkers(
-            data        = sev_pts,
-            lng         = ~Start_Lng,
-            lat         = ~Start_Lat,
-            radius      = 4.5,
-            fillColor   = exec_crimson,
-            color       = "#FFFFFF",
-            weight      = 0.8,
-            fillOpacity = 0.75,
-            group       = "Severe Accident Points",
-            popup       = ~paste0(
-              "<b>Street: </b>", Street, "<br>",
-              "<b>Locality: </b>", census_name, "<br>",
-              "<b>Severity: </b>", Severity, "<br>",
-              "<b>Weather: </b>", Weather_Condition, "<br>",
-              "<b>Time: </b>", Start_Time
+      } else {
+        selected_poly <- va_map_df %>% filter(display_name == input$p3_county)
+        if (nrow(selected_poly) > 0) {
+          bbox <- st_bbox(selected_poly)
+          m <- m %>%
+            addPolygons(
+              data        = selected_poly,
+              fill        = TRUE,
+              fillColor   = exec_crimson,
+              fillOpacity = 0.05,
+              color       = exec_crimson,
+              weight      = 3.5,
+              opacity     = 1.0,
+              group       = "Selected County Boundary"
+            ) %>%
+            fitBounds(
+              lng1 = as.numeric(bbox["xmin"]),
+              lat1 = as.numeric(bbox["ymin"]),
+              lng2 = as.numeric(bbox["xmax"]),
+              lat2 = as.numeric(bbox["ymax"])
             )
+        }
+        
+        zones_df <- p3_street_zone_summary()
+        if (nrow(zones_df) > 0) {
+          zone_pal <- colorNumeric(
+            palette = "plasma",
+            domain  = zones_df$severe_accidents,
+            reverse = TRUE
           )
+          
+          max_acc <- max(zones_df$total_accidents, 1)
+          radii   <- 7 + 14 * sqrt(zones_df$total_accidents / max_acc)
+          
+          m <- m %>%
+            addCircleMarkers(
+              data        = zones_df,
+              lng         = ~lng,
+              lat         = ~lat,
+              radius      = radii,
+              fillColor   = ~zone_pal(severe_accidents),
+              color       = "#1A202C",
+              weight      = 1.5,
+              fillOpacity = 0.90,
+              group       = "Street Zone Hotspots",
+              label       = ~paste0(
+                Street_Zone, " — ", comma(severe_accidents), " severe / ",
+                comma(total_accidents), " total (", percent(severe_rate, accuracy = 0.1), ")"
+              ),
+              popup       = ~paste0(
+                "<b>Street Zone: </b>", Street_Zone, "<br>",
+                "<b>Locality: </b>", census_name, "<br>",
+                "<b>Severe Accidents: </b>", comma(severe_accidents), "<br>",
+                "<b>Total Accidents in Zone: </b>", comma(total_accidents), "<br>",
+                "<b>Zone Severe Rate: </b>", percent(severe_rate, accuracy = 0.1),
+                " (Sim. 95% CI: ", percent(rate_ci_low, 0.1), "–", percent(rate_ci_high, 0.1), ")"
+              )
+            ) %>%
+            addLegend(
+              position = "bottomright",
+              pal      = zone_pal,
+              values   = zones_df$severe_accidents,
+              title    = "Zone Severe Crashes<br><small>(Size = Total Crashes)</small>",
+              opacity  = 0.90
+            )
+        }
       }
     }
     
     m %>%
       addLayersControl(
-        baseGroups    = c("OpenStreetMap (Road Map)", "Esri World Street Map", "Esri Satellite Imagery"),
-        overlayGroups = c("Virginia Counties", "Street Hotspots"),
-        options       = layersControlOptions(collapsed = FALSE)
+        baseGroups = c("Street Map", "Satellite Imagery"),
+        options    = layersControlOptions(collapsed = TRUE)
       )
   })
   
   output$p3_map_sr_summary <- renderUI({
-    df <- p3_street_summary()
-    if (nrow(df) == 0) return(NULL)
-    s1 <- df %>% slice(1)
-    s2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
-    loc_label <- ifelse(input$p3_county == "ALL_VA", "all of Virginia", input$p3_county)
-    
-    msg <- paste0(
-      "Geospatial map summary for ", loc_label, ". ",
-      "Top street hotspot is ", s1$Street, " (", s1$census_name, ") with ",
-      comma(s1$severe_accidents), " severe accidents out of ", comma(s1$total_accidents),
-      " total crashes (", percent(s1$severe_rate, 0.1), " severe rate, ",
-      round(s1$severe_ratio, 2), " severe crashes per 100k residents). ",
-      if (!is.null(s2)) paste0("Second highest is ", s2$Street, " with ", comma(s2$severe_accidents), " severe crashes.") else ""
-    )
-    render_a11y_box(msg, input$a11y_show_text)
+    if (input$p3_county == "ALL_VA") {
+      df <- p3_statewide_county_rates() %>% filter(qualifies_rate)
+      if (nrow(df) == 0) return(NULL)
+      c1 <- df %>% slice(1)
+      c2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
+      msg <- paste0(
+        "Statewide Virginia Severe Accident Rate Map (counties with at least 20 crashes). ",
+        "Highest severe accident rate is in ", c1$census_name, " at ", percent(c1$severe_rate, 0.1),
+        " (", comma(c1$severe_accidents), " severe out of ", comma(c1$total_accidents), " total crashes). ",
+        if (!is.null(c2)) paste0("Second highest is ", c2$census_name, " at ", percent(c2$severe_rate, 0.1), ".") else ""
+      )
+      render_a11y_box(msg, input$a11y_show_text)
+    } else {
+      df <- p3_street_zone_summary()
+      if (nrow(df) == 0) return(NULL)
+      z1 <- df %>% slice(1)
+      z2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
+      msg <- paste0(
+        "County street zone summary for ", input$p3_county, ". ",
+        "Top hotspot zone is ", z1$Street_Zone, " with ",
+        comma(z1$severe_accidents), " severe accidents out of ", comma(z1$total_accidents),
+        " total crashes (", percent(z1$severe_rate, 0.1), " severe rate). ",
+        if (!is.null(z2)) paste0("Second highest zone is ", z2$Street_Zone, " with ", comma(z2$severe_accidents), " severe crashes.") else ""
+      )
+      render_a11y_box(msg, input$a11y_show_text)
+    }
   })
   
   output$p3_street_table <- renderDT({
-    df <- p3_street_summary()
-    validate(need(nrow(df) > 0, "No geocoded street records available for this locality."))
-    
-    tbl <- df %>%
-      select(
-        Street, census_name, total_accidents, severe_accidents,
-        severe_rate, rate_ci_low, rate_ci_high, severe_ratio
-      )
-    
-    datatable(
-      tbl,
-      rownames = FALSE,
-      caption = htmltools::tags$caption(
-        style = "caption-side: top; font-weight: bold; color: #0F2042;",
-        "Accessible Street Hotspot Table (Full Keyboard & Screen-Reader Equivalent to GIS Map)"
-      ),
-      colnames = c(
-        "Street / Highway", "Locality", "Total Acc.", "Severe Acc.",
-        "Severe Rate (%)", "Sim. 95% CI Low", "Sim. 95% CI High", "Severe per 100k"
-      ),
-      options = list(pageLength = 10, scrollX = TRUE)
-    ) %>%
-      formatPercentage(c("severe_rate", "rate_ci_low", "rate_ci_high"), digits = 1) %>%
-      formatRound("severe_ratio", digits = 2)
+    if (input$p3_county == "ALL_VA") {
+      df <- p3_statewide_county_rates() %>%
+        filter(total_accidents > 0) %>%
+        mutate(Volume_Note = ifelse(qualifies_rate, "≥20 Crashes", "<20 Crashes (Low n)")) %>%
+        select(
+          census_name, total_accidents, severe_accidents,
+          severe_rate, rate_ci_low, rate_ci_high, Volume_Note
+        )
+      
+      validate(need(nrow(df) > 0, "No county records available for the selected date range."))
+      
+      datatable(
+        df,
+        rownames = FALSE,
+        caption = htmltools::tags$caption(
+          style = "caption-side: top; font-weight: bold; color: #0F2042;",
+          "Accessible Statewide County Severe Accident Rate Table"
+        ),
+        colnames = c(
+          "Locality", "Total Acc.", "Severe Acc.",
+          "Severe Rate (%)", "Sim. 95% CI Low", "Sim. 95% CI High", "Sample Size"
+        ),
+        options = list(pageLength = 12, scrollX = TRUE)
+      ) %>%
+        formatPercentage(c("severe_rate", "rate_ci_low", "rate_ci_high"), digits = 1) %>%
+        formatCurrency(c("total_accidents", "severe_accidents"), currency = "", interval = 3, mark = ",", digits = 0)
+    } else {
+      df <- p3_street_zone_summary()
+      validate(need(nrow(df) > 0, "No geocoded street zone records available for this locality and date range."))
+      
+      tbl <- df %>%
+        select(
+          Street_Zone, severe_accidents, total_accidents,
+          severe_rate, rate_ci_low, rate_ci_high
+        )
+      
+      datatable(
+        tbl,
+        rownames = FALSE,
+        caption = htmltools::tags$caption(
+          style = "caption-side: top; font-weight: bold; color: #0F2042;",
+          paste0("Accessible Localized Street Zone Hotspot Table for ", input$p3_county)
+        ),
+        colnames = c(
+          "Street & Localized Zone (~1 km)", "Severe Acc.", "Total Acc.",
+          "Severe Rate (%)", "Sim. 95% CI Low", "Sim. 95% CI High"
+        ),
+        options = list(pageLength = 12, scrollX = TRUE)
+      ) %>%
+        formatPercentage(c("severe_rate", "rate_ci_low", "rate_ci_high"), digits = 1) %>%
+        formatCurrency(c("severe_accidents", "total_accidents"), currency = "", interval = 3, mark = ",", digits = 0)
+    }
   })
 }
 
