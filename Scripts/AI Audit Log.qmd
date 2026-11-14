@@ -1289,6 +1289,24 @@ shinyApp(ui = ui, server = server)
 
 ------------------------------------------------------------------------
 
+### Verification Check & Revision 6: Confidence Interval Audit
+
+- **Human Prompt / Audit Observation (11/13/2026):**
+  - *"The confidence intervals on the dashboard needed to be checked to ensure they were calculated correctly, centered around the estimates, and displayed within valid ranges."*
+- **What Our Verification Established (Defect Found & Corrected):**
+  1.  We added checks to confirm that each confidence interval had valid lower and upper bounds, contained its estimate, and matched the underlying calculations. Any inconsistencies were identified and corrected.
+
+------------------------------------------------------------------------
+
+### Verification Check & Revision 7: Weather Grouping Audit
+
+- **Human Prompt / Audit Observation (11/13/2026):**
+  - *"The dashboard grouped many individual weather descriptions into broader categories. We needed to verify that the original weather conditions were assigned to the correct groups and that no accident records were lost."*
+- **What Our Verification Established (Defect Found & Corrected):**
+  1.  We compared the original weather descriptions with their assigned categories and checked that grouped accident counts matched the source data. Incorrect group assignments or count discrepancies were identified and corrected.
+
+------------------------------------------------------------------------
+
 ## 5. Final Verified Dashboard Code (`app.R` — Shipped Version)
 
 ```{r}
