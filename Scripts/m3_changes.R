@@ -565,23 +565,19 @@ ui <- page_navbar(
         )
       ),
       
-      # Page 2 data and confidence-interval audit
+      # Page 2 download button
       card(
         full_screen = TRUE,
         card_header(
           class = "bg-dark text-white",
-          "Dashboard Quality Checks"
+          "Page 2 Confidence Interval Audit"
         ),
         card_body(
-          uiOutput("p2_audit_overview"),
-          DTOutput("p2_audit_table"),
-          hr(),
-          h5("Weather Classification Review"),
-          DTOutput("p2_weather_audit_table")
-        ),
-        card_footer(
-          class = "text-muted small",
-          "PASS means the displayed values pass the programmed consistency checks. REVIEW means there was not enough data to test. Other Weather descriptions should be reviewed as a group, not automatically treated as errors."
+          downloadButton(
+            "download_page_status",
+            "Download Page Status",
+            class = "btn-primary"
+          )
         )
       )
     )
@@ -1807,6 +1803,145 @@ server <- function(input, output, session) {
     datatable(df, rownames = FALSE,
               options = list(pageLength = 8, scrollX = TRUE))
   })
+  
+  # ----------------------------------------------------------------------------
+  # PAGE 2 EXCEL DOWNLOAD: CONFIDENCE INTERVALS & AUDIT STATUS
+  # ----------------------------------------------------------------------------
+  
+  page_status_excel_sheets <- reactive({
+    
+    # 1. Dashboard quality checks
+    audit_checks <- tryCatch(
+      p2_audit_results(),
+      error = function(e) {
+        tibble(
+          Check = "Audit calculation",
+          Status = "REVIEW",
+          Details = conditionMessage(e)
+        )
+      }
+    )
+    
+    # 2. Monthly weather confidence intervals
+    monthly_weather_ci <- tryCatch(
+      p2_ci_data(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 3. Monthly time-series confidence intervals
+    monthly_time_series_ci <- tryCatch(
+      p2_ts_computed(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 4. Weather binomial confidence intervals
+    weather_binomial_ci <- tryCatch(
+      p2_weather_data(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 5. Weather classification review
+    weather_classification <- p2_county_acc() %>%
+      filter(
+        !is.na(Weather_Condition),
+        Weather_Condition != ""
+      ) %>%
+      mutate(
+        Expected_Category = classify_weather_simple(Weather_Condition)
+      ) %>%
+      count(
+        Weather_Condition,
+        Weather_Category,
+        Expected_Category,
+        name = "Accidents"
+      ) %>%
+      mutate(
+        Check = if_else(
+          Weather_Category == Expected_Category,
+          "PASS",
+          "FAIL"
+        )
+      ) %>%
+      arrange(desc(Check), desc(Accidents))
+    
+    # 6. Selected dashboard settings
+    export_settings <- tibble(
+      Setting = c(
+        "Selected County",
+        "Weather Grouping",
+        "Time-Series Metric",
+        "Weather Metric",
+        "Multiple Comparisons Method",
+        "Minimum Accidents per Month",
+        "Minimum Qualifying Months"
+      ),
+      
+      Value = c(
+        input$p2_county,
+        input$p2_weather_grouping,
+        input$p2_ts_metric,
+        input$p2_weather_metric,
+        input$p2_mult_method,
+        as.character(input$p2_min_monthly_acc),
+        as.character(input$p2_min_months)
+      )
+    )
+    
+    # Return all worksheets in one Excel workbook
+    list(
+      Page_Status = audit_checks,
+      Monthly_Weather_CIs = monthly_weather_ci,
+      Time_Series_CIs = monthly_time_series_ci,
+      Weather_Binomial_CIs = weather_binomial_ci,
+      Weather_Classification = weather_classification,
+      Export_Settings = export_settings
+    )
+  })
+  
+  
+  # ----------------------------------------------------------------------------
+  # DOWNLOAD BUTTON: PAGE 2 STATUS WORKBOOK
+  # ----------------------------------------------------------------------------
+  
+  output$download_page_status <- downloadHandler(
+    
+    filename = function() {
+      county_name <- gsub(
+        "[^A-Za-z0-9]+",
+        "_",
+        input$p2_county
+      )
+      
+      paste0(
+        "Page_Status_",
+        county_name,
+        "_",
+        Sys.Date(),
+        ".xlsx"
+      )
+    },
+    
+    content = function(file) {
+      
+      if (!requireNamespace("writexl", quietly = TRUE)) {
+        stop(
+          "Please install writexl first using: ",
+          "install.packages('writexl')"
+        )
+      }
+      
+      writexl::write_xlsx(
+        page_status_excel_sheets(),
+        path = file
+      )
+    }
+  )
   
   # ----------------------------------------------------------------------------
   # PAGE 3 SERVER: REAL VIRGINIA GIS MAP + CLICK-TO-SELECT COUNTY + STREETS
