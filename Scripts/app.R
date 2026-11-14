@@ -474,6 +474,30 @@ ui <- page_navbar(
         )
       ),
       
+      # Page 2 KPI banner (updates with the selected county)
+      uiOutput("p2_kpi_sr_summary"),
+      layout_column_wrap(
+        width = 1/3,
+        value_box(
+          title = "Total Recorded Accidents (Selection)",
+          value = textOutput("p2_kpi_total"),
+          showcase = bs_icon("car-front-fill"),
+          theme = "primary"
+        ),
+        value_box(
+          title = "Overall Severe Accident Rate",
+          value = textOutput("p2_kpi_rate"),
+          showcase = bs_icon("exclamation-triangle-fill"),
+          theme = "danger"
+        ),
+        value_box(
+          title = "Severe Accidents per 100k Residents",
+          value = textOutput("p2_kpi_ratio"),
+          showcase = bs_icon("people-fill"),
+          theme = "secondary"
+        )
+      ),
+      
       layout_column_wrap(
         width = 1/2,
         card(
@@ -538,6 +562,22 @@ ui <- page_navbar(
         ),
         card_body(
           DTOutput("p2_summary_table")
+        )
+      ),
+      
+      # Page 2 download button
+      card(
+        full_screen = TRUE,
+        card_header(
+          class = "bg-dark text-white",
+          "Page 2 Confidence Interval Audit"
+        ),
+        card_body(
+          downloadButton(
+            "download_page_status",
+            "Download Page Status",
+            class = "btn-primary"
+          )
         )
       )
     )
@@ -1204,6 +1244,51 @@ server <- function(input, output, session) {
     acc %>% filter(census_name == input$p2_county)
   })
   
+  # Page 2 KPI calculations: all three values use the selected county
+  p2_kpi_summary <- reactive({
+    df <- p2_county_acc()
+    pop <- county_pop_ranks %>%
+      filter(census_name == input$p2_county) %>%
+      pull(population)
+    pop <- if (length(pop) > 0) pop[1] else NA_real_
+    total <- nrow(df)
+    severe_total <- sum(df$severe, na.rm = TRUE)
+    
+    list(
+      total = total,
+      severe_rate = if (total > 0) severe_total / total else NA_real_,
+      severe_per_100k = if (!is.na(pop) && pop > 0) severe_total / pop * 100000 else NA_real_,
+      severe_total = severe_total
+    )
+  })
+  
+  output$p2_kpi_total <- renderText({
+    comma(p2_kpi_summary()$total)
+  })
+  
+  output$p2_kpi_rate <- renderText({
+    x <- p2_kpi_summary()$severe_rate
+    if (is.na(x)) "N/A" else percent(x, accuracy = 0.1)
+  })
+  
+  output$p2_kpi_ratio <- renderText({
+    x <- p2_kpi_summary()$severe_per_100k
+    if (is.na(x)) "N/A" else number(x, accuracy = 0.1)
+  })
+  
+  output$p2_kpi_sr_summary <- renderUI({
+    x <- p2_kpi_summary()
+    msg <- paste0(
+      input$p2_county, ": ", comma(x$total), " recorded accidents; ",
+      comma(x$severe_total), " severe accidents; ",
+      if (is.na(x$severe_rate)) "severe rate unavailable" else paste0(percent(x$severe_rate, 0.1), " severe rate"),
+      "; ",
+      if (is.na(x$severe_per_100k)) "per-capita rate unavailable" else paste0(round(x$severe_per_100k, 1), " severe accidents per 100,000 residents"),
+      "."
+    )
+    render_a11y_box(msg, input$a11y_show_text)
+  })
+  
   output$p2_ts_title <- renderText({
     paste0("Monthly Severe Accidents & Simultaneous 95% Confidence Band: ", input$p2_county)
   })
@@ -1620,6 +1705,243 @@ server <- function(input, output, session) {
       formatRound("severe_ratio", digits = 2) %>%
       formatCurrency(c("accidents", "severe_accidents", "not_severe_accidents"), currency = "", interval = 3, mark = ",", digits = 0)
   })
+  
+  # Simple audit checks for the selected county. These test CI bounds and
+  # whether the displayed intervals contain their point estimates.
+  p2_audit_results <- reactive({
+    ts <- p2_ts_computed()
+    weather <- p2_weather_data()
+    ci <- tryCatch(p2_ci_data(), error = function(e) tibble())
+    raw_weather <- p2_county_acc() %>%
+      filter(!is.na(Weather_Condition), Weather_Condition != "") %>%
+      mutate(Expected_Category = classify_weather_simple(Weather_Condition))
+    
+    check_status <- function(ok, has_data = TRUE) {
+      if (!has_data) "REVIEW" else if (isTRUE(ok)) "PASS" else "FAIL"
+    }
+    
+    poisson_ok <- nrow(ts) > 0 && all(
+      ts$pois_low <= ts$severe_accidents & ts$pois_high >= ts$severe_accidents,
+      na.rm = TRUE
+    )
+    rate_ok <- nrow(ts) > 0 && all(
+      ts$rate_low <= ts$severe_rate & ts$rate_high >= ts$severe_rate &
+        ts$rate_low >= 0 & ts$rate_high <= 1,
+      na.rm = TRUE
+    )
+    weather_ci_ok <- nrow(weather) > 0 && all(
+      weather$rate_ci_low <= weather$severe_rate &
+        weather$rate_ci_high >= weather$severe_rate &
+        weather$rate_ci_low >= 0 & weather$rate_ci_high <= 1,
+      na.rm = TRUE
+    )
+    monthly_ci_ok <- nrow(ci) > 0 && all(
+      ci$CI_Lower <= ci$Mean_Est & ci$CI_Upper >= ci$Mean_Est &
+        ci$CI_Lower >= 0 &
+        (input$p2_weather_metric != "severe_rate" | ci$CI_Upper <= 1),
+      na.rm = TRUE
+    )
+    weather_counts_ok <- nrow(weather) > 0 && all(
+      weather$severe_accidents + weather$not_severe_accidents == weather$accidents
+    )
+    grouping_ok <- nrow(raw_weather) > 0 && all(
+      !is.na(raw_weather$Weather_Category) &
+        raw_weather$Weather_Category == raw_weather$Expected_Category
+    )
+    
+    tibble(
+      Check = c(
+        "Monthly Poisson CIs contain severe counts",
+        "Monthly binomial CIs contain severe rates",
+        "Weather binomial CIs contain severe rates",
+        "Monthly weather CIs contain their means",
+        "Weather severe + non-severe counts equal total",
+        "Weather descriptions match assigned categories"
+      ),
+      Status = c(
+        check_status(poisson_ok, nrow(ts) > 0),
+        check_status(rate_ok, any(!is.na(ts$severe_rate))),
+        check_status(weather_ci_ok, nrow(weather) > 0),
+        check_status(monthly_ci_ok, nrow(ci) > 0),
+        check_status(weather_counts_ok, nrow(weather) > 0),
+        check_status(grouping_ok, nrow(raw_weather) > 0)
+      )
+    )
+  })
+  
+  output$p2_audit_overview <- renderUI({
+    x <- p2_audit_results()
+    tags$p(
+      class = "alert alert-info",
+      paste0(
+        "County: ", input$p2_county, " | Passed: ", sum(x$Status == "PASS"),
+        " | Failed: ", sum(x$Status == "FAIL"),
+        " | Needs review: ", sum(x$Status == "REVIEW")
+      )
+    )
+  })
+  
+  output$p2_audit_table <- renderDT({
+    datatable(p2_audit_results(), rownames = FALSE,
+              options = list(dom = "t", ordering = FALSE)) %>%
+      formatStyle("Status",
+                  backgroundColor = styleEqual(
+                    c("PASS", "FAIL", "REVIEW"),
+                    c("#D4EDDA", "#F8D7DA", "#FFF3CD")
+                  ), fontWeight = "bold"
+      )
+  })
+  
+  output$p2_weather_audit_table <- renderDT({
+    df <- p2_county_acc() %>%
+      filter(!is.na(Weather_Condition), Weather_Condition != "") %>%
+      mutate(Expected_Category = classify_weather_simple(Weather_Condition)) %>%
+      count(Weather_Condition, Weather_Category, Expected_Category, name = "Accidents") %>%
+      mutate(Check = if_else(Weather_Category == Expected_Category, "PASS", "FAIL")) %>%
+      arrange(desc(Check), desc(Accidents))
+    
+    datatable(df, rownames = FALSE,
+              options = list(pageLength = 8, scrollX = TRUE))
+  })
+  
+  # ----------------------------------------------------------------------------
+  # PAGE 2 EXCEL DOWNLOAD: CONFIDENCE INTERVALS & AUDIT STATUS
+  # ----------------------------------------------------------------------------
+  
+  page_status_excel_sheets <- reactive({
+    
+    # 1. Dashboard quality checks
+    audit_checks <- tryCatch(
+      p2_audit_results(),
+      error = function(e) {
+        tibble(
+          Check = "Audit calculation",
+          Status = "REVIEW",
+          Details = conditionMessage(e)
+        )
+      }
+    )
+    
+    # 2. Monthly weather confidence intervals
+    monthly_weather_ci <- tryCatch(
+      p2_ci_data(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 3. Monthly time-series confidence intervals
+    monthly_time_series_ci <- tryCatch(
+      p2_ts_computed(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 4. Weather binomial confidence intervals
+    weather_binomial_ci <- tryCatch(
+      p2_weather_data(),
+      error = function(e) {
+        tibble(Note = paste("Unavailable:", conditionMessage(e)))
+      }
+    )
+    
+    # 5. Weather classification review
+    weather_classification <- p2_county_acc() %>%
+      filter(
+        !is.na(Weather_Condition),
+        Weather_Condition != ""
+      ) %>%
+      mutate(
+        Expected_Category = classify_weather_simple(Weather_Condition)
+      ) %>%
+      count(
+        Weather_Condition,
+        Weather_Category,
+        Expected_Category,
+        name = "Accidents"
+      ) %>%
+      mutate(
+        Check = if_else(
+          Weather_Category == Expected_Category,
+          "PASS",
+          "FAIL"
+        )
+      ) %>%
+      arrange(desc(Check), desc(Accidents))
+    
+    # 6. Selected dashboard settings
+    export_settings <- tibble(
+      Setting = c(
+        "Selected County",
+        "Weather Grouping",
+        "Time-Series Metric",
+        "Weather Metric",
+        "Multiple Comparisons Method",
+        "Minimum Accidents per Month",
+        "Minimum Qualifying Months"
+      ),
+      
+      Value = c(
+        input$p2_county,
+        input$p2_weather_grouping,
+        input$p2_ts_metric,
+        input$p2_weather_metric,
+        input$p2_mult_method,
+        as.character(input$p2_min_monthly_acc),
+        as.character(input$p2_min_months)
+      )
+    )
+    
+    # Return all worksheets in one Excel workbook
+    list(
+      Page_Status = audit_checks,
+      Monthly_Weather_CIs = monthly_weather_ci,
+      Time_Series_CIs = monthly_time_series_ci,
+      Weather_Binomial_CIs = weather_binomial_ci,
+      Weather_Classification = weather_classification,
+      Export_Settings = export_settings
+    )
+  })
+  
+  
+  # ----------------------------------------------------------------------------
+  # DOWNLOAD BUTTON: PAGE 2 STATUS WORKBOOK
+  # ----------------------------------------------------------------------------
+  
+  output$download_page_status <- downloadHandler(
+    
+    filename = function() {
+      county_name <- gsub(
+        "[^A-Za-z0-9]+",
+        "_",
+        input$p2_county
+      )
+      
+      paste0(
+        "Page_Status_",
+        county_name,
+        "_",
+        Sys.Date(),
+        ".xlsx"
+      )
+    },
+    
+    content = function(file) {
+      
+      if (!requireNamespace("writexl", quietly = TRUE)) {
+        stop(
+          "Please install writexl first using: ",
+          "install.packages('writexl')"
+        )
+      }
+      
+      writexl::write_xlsx(
+        page_status_excel_sheets(),
+        path = file
+      )
+    }
+  )
   
   # ----------------------------------------------------------------------------
   # PAGE 3 SERVER: REAL VIRGINIA GIS MAP + CLICK-TO-SELECT COUNTY + STREETS
