@@ -276,7 +276,7 @@ ui <- page_navbar(
             "Top 10 in Population"    = "top10",
             "All Virginia Localities" = "all"
           ),
-          selected = "top5"
+          selected = "all"
         ),
         selectInput(
           "p1_year",
@@ -366,25 +366,46 @@ ui <- page_navbar(
         )
       ),
       
+      # Page 1 Confidence Interval Show/Hide Section
       card(
         full_screen = TRUE,
+        
         card_header(
           class = "bg-dark text-white",
-          textOutput("p1_ci_header")
+          "Confidence Interval Analysis"
         ),
+        
         card_body(
-          layout_column_wrap(
-            width = 1/2,
+          actionButton(
+            "p1_toggle_ci",
+            "Show Confidence Intervals",
+            class = "btn-primary w-100 mb-3"
+          ),
+          
+          conditionalPanel(
+            condition = "input.p1_toggle_ci % 2 == 1",
+            
             tags$div(
-              plotlyOutput("p1_ci_plot", height = "430px"),
-              uiOutput("p1_ci_sr_summary")
+              class = "mb-2",
+              textOutput("p1_ci_header")
             ),
-            DTOutput("p1_ci_table")
+            
+            layout_column_wrap(
+              width = 1/2,
+              
+              tags$div(
+                plotlyOutput("p1_ci_plot", height = "430px"),
+                uiOutput("p1_ci_sr_summary")
+              ),
+              
+              DTOutput("p1_ci_table")
+            ),
+            
+            tags$div(
+              class = "text-muted small mt-2",
+              "Red diamond = Point Estimate (Monthly Average or Overall Rate); Blue horizontal bar = Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni)."
+            )
           )
-        ),
-        card_footer(
-          class = "text-muted small",
-          "Red diamond = Point Estimate (Monthly Average or Overall Rate); Blue horizontal bar = Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni)."
         )
       )
     )
@@ -630,6 +651,24 @@ ui <- page_navbar(
 # 3. SERVER LOGIC
 # ==============================================================================
 server <- function(input, output, session) {
+  
+  # ----------------------------------------------------------------------------
+  # PAGE 1: CONFIDENCE INTERVAL SHOW/HIDE BUTTON
+  # ----------------------------------------------------------------------------
+  
+  observe({
+    toggle_text <- if (input$p1_toggle_ci %% 2 == 1) {
+      "Hide Confidence Intervals"
+    } else {
+      "Show Confidence Intervals"
+    }
+    
+    updateActionButton(
+      session,
+      "p1_toggle_ci",
+      label = toggle_text
+    )
+  })
   
   # ----------------------------------------------------------------------------
   # EXCEL DOWNLOAD HANDLER: TOP 5 WORST COUNTIES COMPREHENSIVE SUMMARY
@@ -896,7 +935,10 @@ server <- function(input, output, session) {
     }
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
   
   output$p1_county_sr_summary <- renderUI({
@@ -998,7 +1040,10 @@ server <- function(input, output, session) {
       )
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
   
   output$p1_weather_sr_summary <- renderUI({
@@ -1140,24 +1185,68 @@ server <- function(input, output, session) {
     }
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
+  
   
   output$p1_ci_sr_summary <- renderUI({
     df <- p1_ci_data() %>% arrange(desc(Mean_Est))
     if (nrow(df) == 0) return(NULL)
-    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    
+    is_pct <- input$p1_ci_type %in%
+      c("monthly_rate_ci", "weather_binom_ci")
+    
     top_g <- df %>% slice(1)
-    fmt <- function(v) if (is_pct) percent(v, 0.1) else round(v, 2)
+    
+    fmt <- function(v) {
+      if (is_pct) percent(v, 0.1) else round(v, 2)
+    }
+    
+    # Plain-language explanation of the confidence interval
+    interval_width <- top_g$CI_Upper - top_g$CI_Lower
+    
+    precision_msg <- if (
+      interval_width < abs(top_g$Mean_Est) * 0.25
+    ) {
+      "The range is relatively narrow, so the estimate is fairly precise."
+    } else {
+      "The range is relatively wide, so there is more uncertainty around the estimate."
+    }
+    
+    metric_name <- switch(
+      input$p1_ci_type,
+      "monthly_ratio_ci" = "severe accident rate per 100,000 residents",
+      "monthly_rate_ci" = "percentage of accidents that were severe",
+      "weather_binom_ci" = "percentage of accidents in this weather condition that were severe",
+      "accident measure"
+    )
     
     msg <- paste0(
-      "Simultaneous 95% Confidence Interval chart across ", nrow(df), " groups. ",
-      "Highest estimate is ", top_g$Group, " with mean ", fmt(top_g$Mean_Est),
-      " and 95% confidence interval from ", fmt(top_g$CI_Lower), " to ", fmt(top_g$CI_Upper),
-      " based on n = ", comma(top_g$N_Units), " observations. Full numerical values are in the adjacent table."
+      "What this means: The confidence interval gives us a range of ",
+      "values that is consistent with the data, rather than relying on ",
+      "one single estimate. For the highest group, ",
+      top_g$Group,
+      ", the estimated ",
+      metric_name,
+      " is ",
+      fmt(top_g$Mean_Est),
+      ". The data suggest a reasonable range of values from ",
+      fmt(top_g$CI_Lower),
+      " to ",
+      fmt(top_g$CI_Upper),
+      ". ",
+      precision_msg,
+      " This range helps communicate how much uncertainty there is ",
+      "in the estimate; it does not guarantee that the true value falls ",
+      "within this particular interval."
     )
+    
     render_a11y_box(msg, input$a11y_show_text)
   })
+  
   
   output$p1_ci_table <- renderDT({
     df <- p1_ci_data()
@@ -1324,7 +1413,10 @@ server <- function(input, output, session) {
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
   
   output$p2_ts_sr_summary <- renderUI({
@@ -1483,7 +1575,10 @@ server <- function(input, output, session) {
     }
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
   
   output$p2_weather_sr_summary <- renderUI({
@@ -1579,7 +1674,10 @@ server <- function(input, output, session) {
     }
     
     ggplotly(p, tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+      config(
+        displayModeBar = TRUE,
+        displaylogo = FALSE
+      )
   })
   
   output$p2_ci_sr_summary <- renderUI({
