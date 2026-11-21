@@ -1233,7 +1233,7 @@ server <- function(input, output, session) {
       metric_name,
       " is ",
       fmt(top_g$Mean_Est),
-      ". The data suggest a reasonable range of values from ",
+      ". The data suggests a reasonable range of values from ",
       fmt(top_g$CI_Lower),
       " to ",
       fmt(top_g$CI_Upper),
@@ -1680,21 +1680,64 @@ server <- function(input, output, session) {
       )
   })
   
+  
   output$p2_ci_sr_summary <- renderUI({
     df <- p2_ci_data() %>% arrange(desc(Mean_Est))
     if (nrow(df) == 0) return(NULL)
-    is_pct <- (input$p2_weather_metric == "severe_rate")
-    fmt <- function(v) if (is_pct) percent(v, 0.1) else round(v, 2)
+    
+    is_pct <- input$p2_weather_metric == "severe_rate"
+    
+    fmt <- function(v) {
+      if (is_pct) percent(v, 0.1) else round(v, 2)
+    }
+    
     top_c <- df %>% slice(1)
     
+    # Determine how wide the estimated range is
+    interval_width <- top_c$CI_Upper - top_c$CI_Lower
+    
+    precision_msg <- if (
+      interval_width < abs(top_c$Mean_Est) * 0.25
+    ) {
+      "The range is relatively narrow, meaning the estimate is fairly precise."
+    } else {
+      "The range is relatively wide, meaning there is more uncertainty around the estimate."
+    }
+    
+    metric_name <- if (is_pct) {
+      "percentage of accidents that were severe"
+    } else {
+      "severe accidents per 100,000 residents"
+    }
+    
     msg <- paste0(
-      "Monthly weather confidence interval summary for ", input$p2_county, ". ",
-      top_c$Group, " has the highest monthly mean at ", fmt(top_c$Mean_Est),
-      " with a simultaneous 95% CI from ", fmt(top_c$CI_Lower), " to ", fmt(top_c$CI_Upper),
-      " across n = ", top_c$N_Units, " qualifying months."
+      "What this means: This summary looks at monthly accident patterns ",
+      "in ", input$p2_county, " for different weather conditions. ",
+      
+      top_c$Group,
+      " has the highest estimated ",
+      metric_name,
+      ", at ",
+      fmt(top_c$Mean_Est),
+      " per month on average. ",
+      
+      "Based on the available data, a reasonable range for this value ",
+      "is between ",
+      fmt(top_c$CI_Lower),
+      " and ",
+      fmt(top_c$CI_Upper),
+      ". ",
+      
+      precision_msg,
+      " The range helps show how much the monthly estimate may vary. ",
+      
+      "It does not guarantee that the true value falls within this ",
+      "particular range."
     )
+    
     render_a11y_box(msg, input$a11y_show_text)
   })
+  
   
   output$p2_ci_table <- renderDT({
     df <- p2_ci_data()
