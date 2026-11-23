@@ -65,13 +65,7 @@ Our weakest check is communication because we define and use a variable call sev
 
 # The Evidence of Analytic Work Story
 
-## What AI contributed.
-
-## what you changed or verified and deliberately left alone.
-
-## How you established the result.
-
-## What only your statistical judgment supplied.
+The AI functioned as a primary dashboard constructor and to build the code for changes we specified. From AI results, we changed the first summary page to be more statistically accurate and simpler by: making sure that the confidence intervals have enough sample size and that their graph view optional, label changes to make each graph relate to the question and changed the default filter to be all localities and not top 5 in population. Finally, we removed unnecessary prediction intervals and made default family-wise error corrections on the confidence intervals to simplify the user's view and make the view more statistically accurate.  
 
 # Disclosure statement drafted in the form it will take in the final package.
 
