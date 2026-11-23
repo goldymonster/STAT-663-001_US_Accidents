@@ -75,9 +75,7 @@ Our weakest check is communication because we define and use a variable call sev
 
 # Disclosure statement drafted in the form it will take in the final package.
 
-the authors and their roles, which AI tools you used and what for, what you checked and stand behind, and where the full AI log and ledger sit in the final package.
-
-
+Matthew led data extraction, executed a join to census data, and initial data validation checks to look for no unmatched census values and timestamp and severity integrity checks. Maria led the exploratory data analysis and dashboard validation to make sure the confidence intervals are accurate. Both members conducted peer interviews and reviewed all updates/final products. The AI tools used were Genimi and ChatGPT in the fall of 2026, for creating the dashboard, data dictionary, and for formatting different changes such as making the charts into a button and updating the interactive behavior across all three pages. We independently verify our work and have the AI log and Individual Contribution Ledger in our appendix.  
 
 \begin{center}
 \textbf{\large References}
