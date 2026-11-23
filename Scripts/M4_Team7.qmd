@@ -95,6 +95,8 @@ Matthew led data extraction, executed a join to census data, and initial data va
 | 11/18/2026 | Matthew Goldenberg | Made changes to the dashboard based off peer interviews | Reviewed Together on Saturday |
 | 11/20/2026 | Matthew Goldenberg | Created data dictionary | Reviewed Together on Saturday |
 | 11/21/2026 | Matthew Goldenberg | Merged both of our changes into one cohesive file | Reviewed Together on Saturday |
+| 11/22/2026 | Matthew Goldenberg | Worked on 8 item self check for (Question, Transformation, Inferential, Decision)| Reviewed together Monday|
+| 11/23/2026 | Both | Review our M4 answers to the 8 item self check together and worked together to write the disclosure statement and evidence of analytic work history| Reviewed Together |
 
 ```{=latex}
 \begin{landscape}
