@@ -27,6 +27,13 @@ format:
 editor: visual
 ---
 
+# Directions
+
+- Insure Virginia_Accidents_With_Pop.csv is located within the project folder.
+- Insure Virginia Traffic Safety Executive Dashboard — Data & Statistics Dictionary.pdf is in the project folder.
+- Click app.R and open it in Rstudio. 
+- Click RunApp in R studio to run it.
+
 # 8 Check Self Score
 
 ## Question: Fix
