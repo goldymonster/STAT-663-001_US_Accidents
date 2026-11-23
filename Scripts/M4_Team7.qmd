@@ -59,6 +59,10 @@ The operational check needs a fix because we do not identify the freshness of th
 
 This check is rated as a Fix primarily because of how we edited our question in M3 to include a decision of where Virginia's resources are best utilized to reduce accidents. In this case, we do not pre-define the threshold that triggers a triage decision, or what boundary would cause a resource decision (is it 40% severity rate, or some 100k ratio that is the threshold?) The fix would be to predefine what a decision would trigger a triage resource allocation rule (is it 50% severe rate) and restructure our graph 3 to correspond to that rate.
 
+## What is our is weakest check?
+
+Our weakest check is communication because we define and use a variable call severity in the dashboard, but miscommunicate what this means in our dashboard. A governor reading this might think worst financial burden and jump to the wrong conclusion where instead we are showcasing only traffic delay.
+
 # The Evidence of Analytic Work Story
 
 ## What AI contributed.
