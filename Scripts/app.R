@@ -23,7 +23,7 @@ library(writexl)
 options(tigris_use_cache = TRUE)
 
 # ==============================================================================
-# 1. REPRODUCIBLE DATA LOADING & PREPROCESSING
+# 1. REPRODUCIBLE DATA LOADING, PREPROCESSING & M4 NEAR-DUPLICATE REMOVAL
 # ==============================================================================
 data_paths <- c(
   "../Data/Virginia_Accidents_With_Pop.csv",
@@ -56,7 +56,71 @@ classify_weather_simple <- function(w) {
   )
 }
 
-acc <- acc_raw %>%
+# M4 Standard Space-Time Near-Duplicate Filter (<= 2 minutes, <= 100 meters)
+# Retains the earliest record in each 2-minute / 100-meter cluster (breaking
+# exact-second ties by highest Severity first) and guarantees zero remaining
+# kept pairs violate the M4 space-time independence threshold.
+deduplicate_m4_records <- function(df, time_thresh_sec = 120, dist_thresh_m = 100) {
+  has_id <- "ID" %in% names(df)
+  df_ord <- if (has_id) {
+    df %>% arrange(Start_Time, desc(Severity), End_Time, ID)
+  } else {
+    df %>% arrange(Start_Time, desc(Severity), End_Time)
+  }
+  
+  n <- nrow(df_ord)
+  if (n <= 1L) {
+    return(list(data = df_ord, n_removed = 0L))
+  }
+  
+  t_sec <- as.numeric(df_ord$Start_Time)
+  lat   <- as.numeric(df_ord$Start_Lat)
+  lng   <- as.numeric(df_ord$Start_Lng)
+  
+  # Bounding-box pre-filter slightly wider than dist_thresh_m for VA latitudes (~36.5-39.5 N)
+  lat_box <- (dist_thresh_m / 111000) * 1.35
+  lng_box <- (dist_thresh_m / 84000) * 1.35
+  rad     <- pi / 180
+  
+  is_dup <- logical(n)
+  
+  for (i in 2:n) {
+    if (is.na(lat[i]) || is.na(lng[i])) next
+    t_i   <- t_sec[i]
+    lat_i <- lat[i]
+    lng_i <- lng[i]
+    
+    j <- i - 1L
+    while (j >= 1L) {
+      dt <- t_i - t_sec[j]
+      if (dt > time_thresh_sec) break
+      
+      if (!is_dup[j] &&
+          !is.na(lat[j]) && !is.na(lng[j]) &&
+          abs(lat_i - lat[j]) <= lat_box &&
+          abs(lng_i - lng[j]) <= lng_box) {
+        
+        dlat <- (lat[j] - lat_i) * rad
+        dlng <- (lng[j] - lng_i) * rad
+        a    <- sin(dlat / 2)^2 + cos(lat_i * rad) * cos(lat[j] * rad) * sin(dlng / 2)^2
+        d_m  <- 6371000 * 2 * asin(min(1, sqrt(a)))
+        
+        if (d_m <= dist_thresh_m) {
+          is_dup[i] <- TRUE
+          break
+        }
+      }
+      j <- j - 1L
+    }
+  }
+  
+  list(
+    data      = df_ord[!is_dup, , drop = FALSE],
+    n_removed = as.integer(sum(is_dup))
+  )
+}
+
+acc_clean <- acc_raw %>%
   mutate(
     Start_Time        = ymd_hms(Start_Time, tz = "UTC", quiet = TRUE),
     End_Time          = ymd_hms(End_Time, tz = "UTC", quiet = TRUE),
@@ -71,12 +135,61 @@ acc <- acc_raw %>%
     City              = str_squish(coalesce(City, "")),
     census_name       = str_squish(census_name)
   ) %>%
-  filter(!is.na(census_name), !is.na(Severity), !is.na(Year))
+  filter(!is.na(census_name), !is.na(Severity), !is.na(Year), !is.na(Start_Time))
+
+# Execute M4 near-duplicate removal once at app startup
+m4_time_window_sec <- 120
+m4_dist_thresh_m   <- 100
+m4_dedup_res       <- deduplicate_m4_records(
+  acc_clean,
+  time_thresh_sec = m4_time_window_sec,
+  dist_thresh_m   = m4_dist_thresh_m
+)
+
+acc                 <- m4_dedup_res$data
+n_before_m4_dedup   <- nrow(acc_clean)
+n_m4_dups_removed   <- m4_dedup_res$n_removed
+n_after_m4_dedup    <- nrow(acc)
+pct_m4_dups_removed <- ifelse(n_before_m4_dedup > 0, (n_m4_dups_removed / n_before_m4_dedup) * 100, 0)
+
+# Startup integrity assertion for M4 deduplication
+stopifnot(
+  n_after_m4_dedup > 0,
+  n_after_m4_dedup + n_m4_dups_removed == n_before_m4_dedup
+)
+
+m4_dedup_audit_tbl <- tibble(
+  Metric = c(
+    "M4 Deduplication Rule",
+    "Tie-Breaking Rule (Identical Timestamp)",
+    "Valid Virginia Records Before Deduplication",
+    "Near-Duplicate API Records Removed (<=2 min, <=100 m)",
+    "Share of Records Removed (%)",
+    "Distinct Virginia Incident Records Retained"
+  ),
+  Value = c(
+    "Remove subsequent records within <= 2 minutes (120 s) AND <= 100 m (Haversine) of a retained record",
+    "Retain earliest record; break exact-second ties by highest Severity first",
+    comma(n_before_m4_dedup),
+    comma(n_m4_dups_removed),
+    paste0(sprintf("%.2f", pct_m4_dups_removed), "%"),
+    comma(n_after_m4_dedup)
+  )
+)
+
+m4_dedup_note <- paste0(
+  "M4 Deduplication Active (<=2 min, <=100 m): ",
+  comma(n_m4_dups_removed), " near-duplicate API alerts (",
+  sprintf("%.1f%%", pct_m4_dups_removed), ") removed; ",
+  comma(n_after_m4_dedup), " distinct incidents analyzed."
+)
+
+rm(acc_clean, m4_dedup_res)
 
 min_acc_date <- min(acc$Accident_Date, na.rm = TRUE)
 max_acc_date <- max(acc$Accident_Date, na.rm = TRUE)
 
-# Pre-compute static county population & statewide accident summary
+# Pre-compute static county population & statewide accident summary (from M4-deduplicated data)
 county_pop_ranks <- acc %>%
   group_by(GEOID, census_name) %>%
   summarise(
@@ -133,7 +246,7 @@ get_adjusted_alpha <- function(m, method = c("bonferroni", "none"), alpha = 0.05
 calc_binom_ci <- function(x, n, bound = c("lower", "upper"), conf_level = 0.95) {
   bound <- match.arg(bound)
   idx <- ifelse(bound == "lower", 1, 2)
-  conf_level <- pmin(pmax(conf_level, 0.50), 0.999999)
+  conf_level <- pmin(pmax(as.numeric(conf_level)[1], 0.50), 0.999999)
   map2_dbl(x, n, function(k, total) {
     if (is.na(k) || is.na(total) || total <= 0) return(NA_real_)
     binom.test(k, total, conf.level = conf_level)$conf.int[idx]
@@ -143,7 +256,7 @@ calc_binom_ci <- function(x, n, bound = c("lower", "upper"), conf_level = 0.95) 
 calc_poisson_ci <- function(k_vec, bound = c("lower", "upper"), conf_level = 0.95) {
   bound <- match.arg(bound)
   idx <- ifelse(bound == "lower", 1, 2)
-  conf_level <- pmin(pmax(conf_level, 0.50), 0.999999)
+  conf_level <- pmin(pmax(as.numeric(conf_level)[1], 0.50), 0.999999)
   map_dbl(k_vec, function(k) {
     if (is.na(k) || k < 0) return(NA_real_)
     poisson.test(as.integer(round(k)), conf.level = conf_level)$conf.int[idx]
@@ -192,10 +305,10 @@ calc_newey_west_se <- function(dates, values) {
       by = "m"
     )
   
-  x     <- grid$val
-  T_cal <- length(x)
+  x         <- grid$val
+  T_cal     <- length(x)
   n_cal_obs <- sum(!is.na(x))
-  x_sd  <- sd(x, na.rm = TRUE)
+  x_sd      <- sd(x, na.rm = TRUE)
   
   if (n_cal_obs < 4 || T_cal < 4 || is.na(x_sd) || x_sd == 0) {
     return(list(
@@ -400,6 +513,15 @@ ui <- page_navbar(
           `aria-label` = "Download Excel workbook summarizing the Top 5 worst Virginia counties for traffic accidents including rates, averages, and per-resident totals"
         )
       )
+    ),
+    tags$div(
+      class = "bg-white border-bottom px-3 py-1 small text-muted",
+      role = "status",
+      `aria-label` = "Data Hygiene Disclosure",
+      bs_icon("funnel-fill", class = "text-primary"),
+      " ",
+      tags$strong("Data Hygiene & Independence Filter: "),
+      m4_dedup_note
     )
   ),
   
@@ -457,7 +579,7 @@ ui <- page_navbar(
           class = "text-muted",
           bs_icon("compass"),
           tags$strong(" How to Read This Page: "),
-          "First, compare your chosen locality group against Virginia statewide benchmarks in the banner above. Next, see which localities and weather conditions drive severe crashes. Finally, expand the Confidence Interval panel to inspect each locality's monthly average and time-adjusted likely range."
+          "Near-duplicate API alerts logged within 2 minutes and 100 meters of a prior record are removed before analysis. First, compare your chosen locality group against Virginia statewide benchmarks in the banner above. Next, see which localities and weather conditions drive severe crashes. Finally, expand the Confidence Interval panel to inspect each locality's monthly average and time-adjusted likely range."
         )
       ),
       
@@ -516,7 +638,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Shows overall crash burden across your selected localities and time period. Switch Filter #3 on the left to weigh raw volume against per-resident impact."
+            "Shows deduplicated crash burden across your selected localities and time period (near-duplicate API alerts within 2 min and 100 m removed). Switch Filter #3 on the left to weigh raw volume against per-resident impact."
           )
         ),
         card(
@@ -583,7 +705,7 @@ ui <- page_navbar(
             
             tags$div(
               class = "text-muted small mt-2",
-              "How to read this chart (not a boxplot): The red diamond marks the Point Estimate (monthly average or overall severe crash share), and the blue horizontal bar shows the Likely Range — a Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni). For monthly averages, ranges are also time-adjusted to account for consecutive months following multi-month traffic patterns rather than resetting independently each month. Multi-year averages (2016–2023) span shifting traffic and reporting levels; filter to a single year to inspect a steadier period."
+              "How to read this chart (not a boxplot): The red diamond marks the Point Estimate (monthly average or overall severe crash share), and the blue horizontal bar shows the Likely Range — a Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni) on deduplicated records (<=2 min, <=100 m near-duplicates removed). For monthly averages, ranges are also time-adjusted to account for consecutive months following multi-month traffic patterns rather than resetting independently each month. Multi-year averages (2016–2023) span shifting traffic and reporting levels; filter to a single year to inspect a steadier period."
             )
           )
         )
@@ -636,7 +758,7 @@ ui <- page_navbar(
         tags$small(
           class = "text-muted",
           bs_icon("check-circle"),
-          " Comparison Tip: Select up to 3 localities to compare their monthly crash trends and weather risks head-to-head. Raw crash counts are only displayed for 1 locality at a time so larger and smaller communities are always compared fairly. Weather reports are grouped into 5 Core Weather Categories using months with at least 5 crashes."
+          " Comparison Tip: Select up to 3 localities to compare their deduplicated monthly crash trends and weather risks head-to-head. Raw crash counts are only displayed for 1 locality at a time so larger and smaller communities are always compared fairly. Weather reports are grouped into 5 Core Weather Categories using months with at least 5 crashes."
         )
       ),
       
@@ -804,7 +926,7 @@ ui <- page_navbar(
           bs_icon("info-circle"),
           " How to Use This Map: ",
           tags$br(),
-          "• ", tags$strong("Statewide View:"), " Compare Virginia localities shaded by their share of severe crashes so large and small communities are weighed fairly. Localities with fewer than 20 crashes appear in gray.",
+          "• ", tags$strong("Statewide View:"), " Compare Virginia localities shaded by their deduplicated share of severe crashes so large and small communities are weighed fairly. Localities with fewer than 20 crashes appear in gray.",
           tags$br(),
           "• ", tags$strong("Street Corridor View:"), " Click any locality on the map (or select above) to pinpoint the Top 30 ~1 km street zones ranked by Severe Crash Count."
         )
@@ -999,7 +1121,8 @@ server <- function(input, output, session) {
         mutate(Ranking_Criterion = "Top 5 Worst by Severe Rate % (Min 50 Accidents)", .before = 1),
       Current_Tier_Summary = overall_cnty %>%
         filter(Locality %in% p1_selected_counties()) %>%
-        arrange(desc(Overall_Severe_Ratio_100k))
+        arrange(desc(Overall_Severe_Ratio_100k)),
+      M4_Deduplication_Audit = m4_dedup_audit_tbl
     )
   })
   
@@ -1235,7 +1358,7 @@ server <- function(input, output, session) {
     ratio_str <- if (tot_pop > 0) number((tot_sev / tot_pop) * 100000, 0.1, big.mark = ",") else "0.0"
     
     msg <- paste0(
-      "Overview for ", p1_tier_label(), " (", p1_year_label(), "): ",
+      "Overview for ", p1_tier_label(), " (", p1_year_label(), ", M4 deduplicated): ",
       comma(tot_acc), " total crashes (", comps$total, "); ",
       rate_str, " severe crash share (", comps$rate, "); and ",
       ratio_str, " severe crashes per 100,000 residents (", comps$ratio, ")."
@@ -1266,9 +1389,9 @@ server <- function(input, output, session) {
   output$p1_county_subtitle <- renderText({
     metric_phrase <- switch(
       input$p1_metric,
-      "total_accidents" = "Comparing total recorded crashes (all severities)",
-      "severe_rate"     = "Comparing the percentage of crashes classified as severe (Severity 3–4)",
-      "severe_ratio"    = "Comparing severe crashes (Severity 3–4) per 100,000 residents"
+      "total_accidents" = "Comparing total deduplicated crashes (all severities)",
+      "severe_rate"     = "Comparing the percentage of deduplicated crashes classified as severe (Severity 3–4)",
+      "severe_ratio"    = "Comparing deduplicated severe crashes (Severity 3–4) per 100,000 residents"
     )
     scope_note <- ifelse(
       input$p1_pop_tier == "all",
@@ -1760,7 +1883,7 @@ server <- function(input, output, session) {
     }
     
     msg <- paste0(
-      "What this means (", p1_tier_label(), ", ", p1_year_label(), "; ", nrow(df), " groups shown): ",
+      "What this means (", p1_tier_label(), ", ", p1_year_label(), "; ", nrow(df), " groups shown, M4 deduplicated): ",
       "A ", ifelse(is_monthly, "time-adjusted simultaneous 95% confidence interval", "simultaneous 95% confidence interval"),
       " (shown as the likely range) gives a span of values consistent with the data, rather than relying on one single estimate. ",
       "For the highest group, ", top_g$Group, ", the estimated ", metric_name, " is ",
@@ -1972,7 +2095,7 @@ server <- function(input, output, session) {
         " severe crashes per 100k residents"
       )
     })
-    msg <- paste0("Locality comparison (2016–2023) — ", paste(parts, collapse = "; "), ".")
+    msg <- paste0("Locality comparison (2016–2023, M4 deduplicated) — ", paste(parts, collapse = "; "), ".")
     render_a11y_box(msg, input$a11y_show_text)
   })
   
@@ -1989,7 +2112,7 @@ server <- function(input, output, session) {
   output$p2_ts_footer <- renderText({
     n_locs <- length(p2_selected_locs())
     if (n_locs <= 1) {
-      "The line tracks monthly results over time, while the shaded band shows the expected range of monthly variability (Bonferroni simultaneous 95% confidence band)."
+      "The line tracks deduplicated monthly results over time, while the shaded band shows the expected range of monthly variability (Bonferroni simultaneous 95% confidence band)."
     } else if (input$p2_ts_metric == "count") {
       "Raw crash counts are only plotted for a single locality at a time so differences in population size do not distort the comparison."
     } else {
@@ -2680,7 +2803,7 @@ server <- function(input, output, session) {
     }
     
     msg <- paste0(
-      "What this means: This summary compares monthly crash patterns in ",
+      "What this means: This summary compares deduplicated monthly crash patterns in ",
       p2_locs_label(),
       " across core weather categories using time-adjusted simultaneous 95% confidence intervals ",
       "(shown as likely ranges). ",
@@ -2760,12 +2883,14 @@ server <- function(input, output, session) {
       formatCurrency(c("accidents", "severe_accidents", "not_severe_accidents"), currency = "", interval = 3, mark = ",", digits = 0)
   })
   
-  # Simple audit checks across all selected Page 2 localities
+  # Automated audit checks across all selected Page 2 localities
   p2_audit_results <- reactive({
-    ts <- p2_ts_computed()
+    ts      <- p2_ts_computed()
     weather <- p2_weather_data()
-    ci <- tryCatch(p2_ci_data(), error = function(e) tibble())
-    raw_weather <- p2_county_acc() %>%
+    ci      <- tryCatch(p2_ci_data(), error = function(e) tibble())
+    loc_df  <- p2_county_acc()
+    
+    raw_weather <- loc_df %>%
       filter(!is.na(Weather_Condition), Weather_Condition != "") %>%
       mutate(Expected_Category = classify_weather_simple(Weather_Condition))
     
@@ -2805,6 +2930,12 @@ server <- function(input, output, session) {
       !is.na(raw_weather$Weather_Category) &
         raw_weather$Weather_Category == raw_weather$Expected_Category
     )
+    m4_dedup_ok <- nrow(loc_df) > 0 &&
+      deduplicate_m4_records(
+        loc_df,
+        time_thresh_sec = m4_time_window_sec,
+        dist_thresh_m   = m4_dist_thresh_m
+      )$n_removed == 0L
     
     tibble(
       Check = c(
@@ -2814,7 +2945,8 @@ server <- function(input, output, session) {
         "Time-adjusted (Newey-West) monthly weather CIs contain their means",
         "Newey-West HAC monthly standard errors are finite and non-negative",
         "Weather severe + non-severe counts equal total",
-        "Weather descriptions match assigned categories"
+        "Weather descriptions match assigned categories",
+        "Zero M4 near-duplicates remain in selected localities (<=2 min, <=100 m)"
       ),
       Status = c(
         check_status(poisson_ok, nrow(ts) > 0),
@@ -2823,7 +2955,8 @@ server <- function(input, output, session) {
         check_status(monthly_ci_ok, nrow(ci) > 0),
         check_status(nw_se_ok, nrow(ci) > 0),
         check_status(weather_counts_ok, nrow(weather) > 0),
-        check_status(grouping_ok, nrow(raw_weather) > 0)
+        check_status(grouping_ok, nrow(raw_weather) > 0),
+        check_status(m4_dedup_ok, nrow(loc_df) > 0)
       )
     )
   })
@@ -2926,6 +3059,8 @@ server <- function(input, output, session) {
     export_settings <- tibble(
       Setting = c(
         "Selected Localities (Max 3)",
+        "M4 Near-Duplicate Filter",
+        "Statewide Rows Removed by M4 Filter",
         "Weather Grouping",
         "Time-Series Metric",
         "Weather Metric",
@@ -2936,6 +3071,8 @@ server <- function(input, output, session) {
       ),
       Value = c(
         paste(p2_selected_locs(), collapse = ", "),
+        "<= 2 minutes (120 s) AND <= 100 m Haversine (earliest kept; exact-second ties keep highest Severity)",
+        paste0(comma(n_m4_dups_removed), " of ", comma(n_before_m4_dedup), " (", sprintf("%.2f%%", pct_m4_dups_removed), ")"),
         "Weather_Category (5 Core Weather Categories)",
         input$p2_ts_metric,
         input$p2_weather_metric,
@@ -2947,12 +3084,13 @@ server <- function(input, output, session) {
     )
     
     list(
-      Page_Status = audit_checks,
-      Monthly_Weather_CIs = monthly_weather_ci,
-      Time_Series_CIs = monthly_time_series_ci,
-      Weather_Binomial_CIs = weather_binomial_ci,
-      Weather_Classification = weather_classification,
-      Export_Settings = export_settings
+      Page_Status             = audit_checks,
+      M4_Deduplication_Audit  = m4_dedup_audit_tbl,
+      Monthly_Weather_CIs     = monthly_weather_ci,
+      Time_Series_CIs         = monthly_time_series_ci,
+      Weather_Binomial_CIs    = weather_binomial_ci,
+      Weather_Classification  = weather_classification,
+      Export_Settings         = export_settings
     )
   })
   
@@ -3136,11 +3274,11 @@ server <- function(input, output, session) {
   
   output$p3_map_subtitle <- renderText({
     if (input$p3_county == "ALL_VA") {
-      "Localities with at least 20 crashes are shaded by their share of severe crashes so small and large communities can be compared fairly. Low-volume localities (<20 crashes) appear in gray. Click any locality to locate its highest-crash corridors."
+      "Localities with at least 20 deduplicated crashes are shaded by their share of severe crashes so small and large communities can be compared fairly. Low-volume localities (<20 crashes) appear in gray. Click any locality to locate its highest-crash corridors."
     } else {
       paste0(
         "Showing the Top 30 localized (~1 km) street zones in ", input$p3_county,
-        ". Circle color = Severe Crash Count; Circle size = Total Crashes in zone. Click 'Zoom Out to Full Virginia Map' to return."
+        " (M4 deduplicated). Circle color = Severe Crash Count; Circle size = Total Crashes in zone. Click 'Zoom Out to Full Virginia Map' to return."
       )
     }
   })
@@ -3155,9 +3293,9 @@ server <- function(input, output, session) {
   
   output$p3_table_footer <- renderText({
     if (input$p3_county == "ALL_VA") {
-      "Lists each locality's crash totals, severe crash share, and likely range (Bonferroni simultaneous 95% binomial CI). Localities with at least 20 crashes are ranked first."
+      "Lists each locality's deduplicated crash totals, severe crash share, and likely range (Bonferroni simultaneous 95% binomial CI). Localities with at least 20 crashes are ranked first."
     } else {
-      "Lists each ~1 km street zone's severe crashes, total crashes, severe share, and likely range (Bonferroni simultaneous 95% binomial CI)."
+      "Lists each ~1 km street zone's deduplicated severe crashes, total crashes, severe share, and likely range (Bonferroni simultaneous 95% binomial CI)."
     }
   })
   
@@ -3320,7 +3458,7 @@ server <- function(input, output, session) {
       c1 <- df %>% slice(1)
       c2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
       msg <- paste0(
-        "Statewide Virginia Severe Crash Share Map (localities with at least 20 crashes). ",
+        "Statewide Virginia Severe Crash Share Map (M4 deduplicated; localities with at least 20 crashes). ",
         "Highest severe crash share is in ", c1$census_name, " at ", percent(c1$severe_rate, 0.1),
         " (", comma(c1$severe_accidents), " severe out of ", comma(c1$total_accidents), " total crashes). ",
         if (!is.null(c2)) paste0("Second highest is ", c2$census_name, " at ", percent(c2$severe_rate, 0.1), ".") else ""
@@ -3332,7 +3470,7 @@ server <- function(input, output, session) {
       z1 <- df %>% slice(1)
       z2 <- if (nrow(df) >= 2) df %>% slice(2) else NULL
       msg <- paste0(
-        "Corridor hotspot summary for ", input$p3_county, ". ",
+        "Corridor hotspot summary for ", input$p3_county, " (M4 deduplicated). ",
         "Top priority street zone is ", z1$Street_Zone, " with ",
         comma(z1$severe_accidents), " severe crashes out of ", comma(z1$total_accidents),
         " total crashes (", percent(z1$severe_rate, 0.1), " severe share). ",
@@ -3359,7 +3497,7 @@ server <- function(input, output, session) {
         rownames = FALSE,
         caption = htmltools::tags$caption(
           style = "caption-side: top; font-weight: bold; color: #0F2042;",
-          "Statewide Locality Severe Crash Share Table (with Simultaneous 95% CIs)"
+          "Statewide Locality Severe Crash Share Table (M4 Deduplicated, with Simultaneous 95% CIs)"
         ),
         colnames = c(
           "Locality", "Total Crashes", "Severe Crashes",
@@ -3384,7 +3522,7 @@ server <- function(input, output, session) {
         rownames = FALSE,
         caption = htmltools::tags$caption(
           style = "caption-side: top; font-weight: bold; color: #0F2042;",
-          paste0("Priority Street Corridor Table for ", input$p3_county, " (with Simultaneous 95% CIs)")
+          paste0("Priority Street Corridor Table for ", input$p3_county, " (M4 Deduplicated, with Simultaneous 95% CIs)")
         ),
         colnames = c(
           "Street & Localized Zone (~1 km)", "Severe Crashes", "Total Crashes",
