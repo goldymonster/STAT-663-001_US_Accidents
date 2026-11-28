@@ -118,7 +118,7 @@ va_boundaries_raw <- tryCatch({
 })
 
 # ==============================================================================
-# SIMPLE, STANDARD STATISTICAL HELPER FUNCTIONS
+# STATISTICAL HELPER FUNCTIONS (INCLUDING NEWEY-WEST HAC STANDARD ERRORS)
 # ==============================================================================
 get_adjusted_alpha <- function(m, method = c("bonferroni", "none"), alpha = 0.05) {
   method <- match.arg(method)
@@ -150,11 +150,121 @@ calc_poisson_ci <- function(k_vec, bound = c("lower", "upper"), conf_level = 0.9
   })
 }
 
+# Base-R Newey-West (HAC) Standard Error for Monthly Time Series
+# Reconstructs a complete calendar-month grid so lag-1 strictly compares adjacent
+# calendar months; uses Bartlett kernel weights (guaranteed PSD) + Newey-West (1994)
+# automatic bandwidth selection + small-sample N/(N-1) adjustment.
+calc_newey_west_se <- function(dates, values) {
+  valid <- !is.na(dates) & !is.na(values) & !is.nan(values)
+  d_obs <- as.Date(dates[valid])
+  v_obs <- as.numeric(values[valid])
+  n_obs <- length(v_obs)
+  
+  if (n_obs == 0) {
+    return(list(
+      SE_Naive   = NA_real_,
+      SE         = NA_real_,
+      NW_Lag     = NA_integer_,
+      SE_Mult    = NA_real_,
+      Eff_Months = NA_real_
+    ))
+  }
+  
+  if (n_obs == 1) {
+    return(list(
+      SE_Naive   = NA_real_,
+      SE         = NA_real_,
+      NW_Lag     = 0L,
+      SE_Mult    = NA_real_,
+      Eff_Months = 1.0
+    ))
+  }
+  
+  se_naive <- sd(v_obs) / sqrt(n_obs)
+  
+  # Reconstruct complete calendar-month grid so missing seasonal months do not distort lags
+  full_months <- seq(min(d_obs), max(d_obs), by = "1 month")
+  grid <- tibble(m = full_months) %>%
+    left_join(
+      tibble(m = d_obs, val = v_obs) %>%
+        group_by(m) %>%
+        summarise(val = mean(val, na.rm = TRUE), .groups = "drop"),
+      by = "m"
+    )
+  
+  x     <- grid$val
+  T_cal <- length(x)
+  n_cal_obs <- sum(!is.na(x))
+  x_sd  <- sd(x, na.rm = TRUE)
+  
+  if (n_cal_obs < 4 || T_cal < 4 || is.na(x_sd) || x_sd == 0) {
+    return(list(
+      SE_Naive   = se_naive,
+      SE         = se_naive,
+      NW_Lag     = 0L,
+      SE_Mult    = 1.0,
+      Eff_Months = as.numeric(n_cal_obs)
+    ))
+  }
+  
+  mu <- mean(x, na.rm = TRUE)
+  # Zero-pad unobserved calendar months so only true calendar-lag pairs contribute (guaranteed PSD)
+  e  <- ifelse(is.na(x), 0, x - mu)
+  
+  gamma0 <- sum(e^2) / n_cal_obs
+  
+  calc_gamma <- function(l) {
+    if (l <= 0L || l >= T_cal) return(0)
+    sum(e[(l + 1L):T_cal] * e[1L:(T_cal - l)]) / n_cal_obs
+  }
+  
+  # Newey-West (1994) automatic Bartlett bandwidth selection (capped at 12 lags or N/3)
+  max_L  <- as.integer(min(12L, max(1L, floor(n_cal_obs / 3)), T_cal - 1L))
+  n_init <- as.integer(min(max_L, max(1L, floor(4 * (n_cal_obs / 100)^(2 / 9)))))
+  
+  g_init <- vapply(seq_len(n_init), calc_gamma, numeric(1))
+  s0     <- gamma0 + 2 * sum(g_init)
+  s1     <- 2 * sum(seq_len(n_init) * g_init)
+  
+  if (is.finite(s0) && abs(s0) > 1e-10 && is.finite(s1)) {
+    alpha1 <- (s1 / s0)^2
+    L_opt  <- floor(1.1447 * (alpha1 * n_cal_obs)^(1 / 3))
+    L      <- as.integer(min(max_L, max(0L, L_opt)))
+  } else {
+    L <- n_init
+  }
+  
+  # Bartlett-weighted long-run variance
+  lrv <- gamma0
+  if (L >= 1L) {
+    for (l in seq_len(L)) {
+      w_l <- 1 - (l / (L + 1))
+      lrv <- lrv + 2 * w_l * calc_gamma(l)
+    }
+  }
+  
+  # Small-sample degrees-of-freedom adjustment N / (N - 1)
+  lrv_adj <- max(0, lrv * (n_cal_obs / (n_cal_obs - 1)))
+  se_nw   <- sqrt(lrv_adj / n_cal_obs)
+  
+  se_mult <- if (!is.na(se_naive) && se_naive > 0) se_nw / se_naive else 1.0
+  eff_n   <- if (!is.na(se_mult) && se_mult > 0) min(as.numeric(n_cal_obs), n_cal_obs / (se_mult^2)) else as.numeric(n_cal_obs)
+  
+  list(
+    SE_Naive   = se_naive,
+    SE         = se_nw,
+    NW_Lag     = L,
+    SE_Mult    = se_mult,
+    Eff_Months = eff_n
+  )
+}
+
 compute_simple_ci <- function(df, group_col, value_col, pop_col = NULL,
+                              time_col = "month_year",
                               mult_method = "bonferroni", upper_cap = Inf,
                               min_months = 10) {
   grouped <- df %>%
-    filter(!is.na(.data[[value_col]]) & !is.nan(.data[[value_col]])) %>%
+    filter(!is.na(.data[[value_col]]) & !is.nan(.data[[value_col]]) & !is.na(.data[[time_col]])) %>%
     group_by(Group = .data[[group_col]]) %>%
     summarise(
       pop      = if (!is.null(pop_col)) first(.data[[pop_col]]) else NA_real_,
@@ -162,14 +272,20 @@ compute_simple_ci <- function(df, group_col, value_col, pop_col = NULL,
       Mean_Est = mean(.data[[value_col]], na.rm = TRUE),
       variance = var(.data[[value_col]], na.rm = TRUE),
       stdev    = sqrt(pmax(0, variance)),
-      SE       = stdev / sqrt(N_Units),
+      nw_res   = list(calc_newey_west_se(.data[[time_col]], .data[[value_col]])),
       .groups  = "drop"
     ) %>%
     filter(Mean_Est > 0)
   
+  if (nrow(grouped) == 0) return(tibble())
+  
+  grouped <- grouped %>% unnest_wider(nw_res)
+  
   filtered <- grouped %>% filter(N_Units >= min_months)
   if (nrow(filtered) == 0) filtered <- grouped %>% filter(N_Units >= 5)
   if (nrow(filtered) == 0) filtered <- grouped %>% filter(N_Units >= 3)
+  
+  if (nrow(filtered) == 0) return(tibble())
   
   m_groups  <- max(1, nrow(filtered))
   alpha_adj <- get_adjusted_alpha(m_groups, mult_method, alpha = 0.05)
@@ -330,9 +446,9 @@ ui <- page_navbar(
           "p1_ci_type",
           "4. Monthly Average & Confidence Interval View (Bottom Chart):",
           choices = c(
-            "Monthly Severe Crashes per 100k (Avg & 95% CI)" = "monthly_ratio_ci",
-            "Monthly Severe Crash Share % (Avg & 95% CI)"    = "monthly_rate_ci",
-            "Weather Severe Crash Share % (Binomial 95% CI)" = "weather_binom_ci"
+            "Monthly Severe Crashes per 100k (Time-Adjusted Avg & 95% CI)" = "monthly_ratio_ci",
+            "Monthly Severe Crash Share % (Time-Adjusted Avg & 95% CI)"    = "monthly_rate_ci",
+            "Weather Severe Crash Share % (Binomial 95% CI)"               = "weather_binom_ci"
           ),
           selected = "monthly_ratio_ci"
         ),
@@ -341,7 +457,7 @@ ui <- page_navbar(
           class = "text-muted",
           bs_icon("compass"),
           tags$strong(" How to Read This Page: "),
-          "First, compare your chosen locality group against Virginia statewide benchmarks in the banner above. Next, see which localities and weather conditions drive severe crashes. Finally, expand the Confidence Interval panel to inspect how steady or variable each locality's monthly average is."
+          "First, compare your chosen locality group against Virginia statewide benchmarks in the banner above. Next, see which localities and weather conditions drive severe crashes. Finally, expand the Confidence Interval panel to inspect each locality's monthly average and time-adjusted likely range."
         )
       ),
       
@@ -467,7 +583,7 @@ ui <- page_navbar(
             
             tags$div(
               class = "text-muted small mt-2",
-              "How to read this chart (not a boxplot): The red diamond marks the Point Estimate (monthly average or overall severe crash share), and the blue horizontal bar shows the Likely Range — a Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni). Wider bars indicate higher variability or fewer observations."
+              "How to read this chart (not a boxplot): The red diamond marks the Point Estimate (monthly average or overall severe crash share), and the blue horizontal bar shows the Likely Range — a Simultaneous 95% Confidence Interval adjusted for multiple comparisons (Bonferroni). For monthly averages, ranges are also time-adjusted to account for consecutive months following multi-month traffic patterns rather than resetting independently each month. Multi-year averages (2016–2023) span shifting traffic and reporting levels; filter to a single year to inspect a steadier period."
             )
           )
         )
@@ -589,7 +705,7 @@ ui <- page_navbar(
           ),
           card_footer(
             class = "text-muted small",
-            "Side-by-side comparison of the 5 Core Weather Categories across your selected localities. Inspect the chart below to see how steady each locality's monthly weather average is."
+            "Side-by-side comparison of the 5 Core Weather Categories across your selected localities. Inspect the chart below to see each locality's time-adjusted monthly weather range."
           )
         )
       ),
@@ -612,7 +728,7 @@ ui <- page_navbar(
         ),
         card_footer(
           class = "text-muted small",
-          "How to read this chart (not a boxplot): Each locality appears on its own separate line within every weather category. The marker shows the Point Estimate (monthly mean), and the horizontal bar shows the Likely Range — a Simultaneous 95% Confidence Interval (Mean ± t × SE, Bonferroni-adjusted)."
+          "How to read this chart (not a boxplot): Each locality appears on its own separate line within every weather category. The marker shows the Point Estimate (monthly mean), and the horizontal bar shows the Time-Adjusted Likely Range — a Simultaneous 95% Confidence Interval widened to account for consecutive months following multi-month traffic patterns across 2016–2023 and adjusted for multiple comparisons (Bonferroni)."
         )
       ),
       
@@ -794,7 +910,7 @@ server <- function(input, output, session) {
                       max(df_filtered$month_year, na.rm = TRUE),
                       by = "1 month")
     
-    # 1. Monthly metrics per county (for Means and 95% CIs)
+    # 1. Monthly metrics per county (for Means and Time-Adjusted Newey-West 95% CIs)
     monthly_cnty <- df_filtered %>%
       filter(!is.na(month_year)) %>%
       group_by(census_name, month_year) %>%
@@ -822,16 +938,28 @@ server <- function(input, output, session) {
         Mean_Monthly_Total_Acc       = round(mean(accidents, na.rm = TRUE), 2),
         Mean_Monthly_Severe_Acc      = round(mean(severe_accidents, na.rm = TRUE), 2),
         Mean_Monthly_Severe_Ratio    = round(mean(severe_ratio, na.rm = TRUE), 2),
-        SE_Monthly_Ratio             = sd(severe_ratio, na.rm = TRUE) / sqrt(n()),
-        Monthly_Ratio_95CI_Low       = round(pmax(0, Mean_Monthly_Severe_Ratio - qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio), 2),
-        Monthly_Ratio_95CI_High      = round(Mean_Monthly_Severe_Ratio + qt(0.975, df = pmax(1, n() - 1)) * SE_Monthly_Ratio, 2),
-        Mean_Monthly_Severe_Rate_Pct = round(mean(severe_rate, na.rm = TRUE) * 100, 2),
-        SE_Monthly_Rate              = sd(severe_rate, na.rm = TRUE) / sqrt(pmax(1, sum(!is.na(severe_rate)))),
-        Monthly_Rate_95CI_Low_Pct    = round(pmax(0, (mean(severe_rate, na.rm = TRUE) - qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
-        Monthly_Rate_95CI_High_Pct   = round(pmin(100, (mean(severe_rate, na.rm = TRUE) + qt(0.975, df = pmax(1, sum(!is.na(severe_rate)) - 1)) * SE_Monthly_Rate) * 100), 2),
+        nw_ratio                     = list(calc_newey_west_se(month_year, severe_ratio)),
+        Mean_Monthly_Severe_Rate_Raw = mean(severe_rate, na.rm = TRUE),
+        Mean_Monthly_Severe_Rate_Pct = round(Mean_Monthly_Severe_Rate_Raw * 100, 2),
+        nw_rate                      = list(calc_newey_west_se(month_year, severe_rate)),
         .groups = "drop"
       ) %>%
-      select(-SE_Monthly_Ratio, -SE_Monthly_Rate)
+      mutate(
+        SE_Monthly_Ratio           = map_dbl(nw_ratio, ~ .x$SE),
+        Ratio_NW_SE_Multiplier     = round(map_dbl(nw_ratio, ~ .x$SE_Mult), 2),
+        Monthly_Ratio_95CI_Low     = round(pmax(0, Mean_Monthly_Severe_Ratio - qt(0.975, df = pmax(1, Total_Months_Observed - 1)) * SE_Monthly_Ratio), 2),
+        Monthly_Ratio_95CI_High    = round(Mean_Monthly_Severe_Ratio + qt(0.975, df = pmax(1, Total_Months_Observed - 1)) * SE_Monthly_Ratio, 2),
+        SE_Monthly_Rate            = map_dbl(nw_rate, ~ .x$SE),
+        Rate_NW_SE_Multiplier      = round(map_dbl(nw_rate, ~ .x$SE_Mult), 2),
+        Monthly_Rate_95CI_Low_Pct  = round(pmax(0, (Mean_Monthly_Severe_Rate_Raw - qt(0.975, df = pmax(1, Active_Months_With_Crashes - 1)) * SE_Monthly_Rate) * 100), 2),
+        Monthly_Rate_95CI_High_Pct = round(pmin(100, (Mean_Monthly_Severe_Rate_Raw + qt(0.975, df = pmax(1, Active_Months_With_Crashes - 1)) * SE_Monthly_Rate) * 100), 2)
+      ) %>%
+      select(
+        census_name, Total_Months_Observed, Active_Months_With_Crashes,
+        Mean_Monthly_Total_Acc, Mean_Monthly_Severe_Acc,
+        Mean_Monthly_Severe_Ratio, Monthly_Ratio_95CI_Low, Monthly_Ratio_95CI_High, Ratio_NW_SE_Multiplier,
+        Mean_Monthly_Severe_Rate_Pct, Monthly_Rate_95CI_Low_Pct, Monthly_Rate_95CI_High_Pct, Rate_NW_SE_Multiplier
+      )
     
     # 2. Overall cumulative county metrics
     overall_cnty <- county_pop_ranks %>%
@@ -1409,7 +1537,10 @@ server <- function(input, output, session) {
           CI_Lower      = lower_ci,
           CI_Upper      = upper_ci,
           m_comparisons = m_comparisons,
-          conf_level    = conf_level
+          conf_level    = conf_level,
+          Eff_Months    = NA_real_,
+          NW_Lag        = NA_integer_,
+          SE_Mult       = NA_real_
         )
       return(df)
     }
@@ -1425,19 +1556,21 @@ server <- function(input, output, session) {
     target_col <- ifelse(input$p1_ci_type == "monthly_ratio_ci", "severe_ratio", "severe_rate")
     upper_cap  <- ifelse(input$p1_ci_type == "monthly_ratio_ci", Inf, 1.0)
     
-    compute_simple_ci(
+    res <- compute_simple_ci(
       df          = monthly,
       group_col   = "census_name",
       value_col   = target_col,
       pop_col     = "population",
+      time_col    = "month_year",
       mult_method = "bonferroni",
       upper_cap   = upper_cap,
       min_months  = 6
-    ) %>%
-      arrange(desc(pop))
+    )
+    if (nrow(res) == 0) return(tibble())
+    res %>% arrange(desc(pop))
   })
   
-  # Chart 3 Dynamic Story Title (M4goldapp.R)
+  # Chart 3 Dynamic Story Title
   output$p1_ci_header <- renderText({
     df <- p1_ci_data() %>% arrange(desc(Mean_Est))
     is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
@@ -1471,25 +1604,44 @@ server <- function(input, output, session) {
     )
   })
   
-  # Chart 3 Hybrid Subtitle (M4goldapp.R plain-English explanation + app.R Bonferroni metadata)
+  # Chart 3 Hybrid Subtitle (Plain-English Time-Adjusted explanation + Bonferroni metadata)
   output$p1_ci_subtitle <- renderText({
     df <- p1_ci_data()
     m_val <- if (nrow(df) > 0) df$m_comparisons[1] else 1
     c_lvl <- if (nrow(df) > 0) percent(df$conf_level[1], accuracy = 0.01) else "95.0%"
-    stat_note <- paste0(
-      " [Bonferroni Simultaneous 95% CI: m = ", m_val,
-      " comparisons, ", c_lvl, " individual interval level.]"
-    )
+    is_monthly <- input$p1_ci_type != "weather_binom_ci"
+    
+    stat_note <- if (is_monthly) {
+      paste0(
+        " [Time-Adjusted Bonferroni Simultaneous 95% CI: m = ", m_val,
+        " comparisons, ", c_lvl, " individual interval level.]"
+      )
+    } else {
+      paste0(
+        " [Bonferroni Simultaneous 95% CI: m = ", m_val,
+        " comparisons, ", c_lvl, " individual interval level.]"
+      )
+    }
+    
+    trend_note <- if (is_monthly && input$p1_year == "All") {
+      " Multi-year averages span shifting 2016–2023 traffic and reporting levels; select a single year on the left to inspect a steadier period."
+    } else {
+      ""
+    }
     
     plain_note <- switch(
       input$p1_ci_type,
       "monthly_ratio_ci" = paste0(
-        "Typical monthly average (red diamond) and likely range for that average (blue bar) across ",
-        p1_tier_label(), " (", p1_year_label(), "). Narrower bars reflect steadier month-to-month patterns."
+        "Typical monthly average (red diamond) and time-adjusted likely range (blue bar) across ",
+        p1_tier_label(), " (", p1_year_label(),
+        "). Widened to account for consecutive months following multi-month traffic patterns rather than resetting independently each month.",
+        trend_note
       ),
       "monthly_rate_ci" = paste0(
-        "Typical monthly severe crash share (red diamond) and likely range for that average (blue bar) across ",
-        p1_tier_label(), " (", p1_year_label(), "). Narrower bars reflect steadier month-to-month rates."
+        "Typical monthly severe crash share (red diamond) and time-adjusted likely range (blue bar) across ",
+        p1_tier_label(), " (", p1_year_label(),
+        "). Widened to account for consecutive months following multi-month traffic patterns rather than resetting independently each month.",
+        trend_note
       ),
       "weather_binom_ci" = paste0(
         "Overall severe crash share (red diamond) and likely range (blue bar) for each top weather condition in ",
@@ -1503,16 +1655,38 @@ server <- function(input, output, session) {
     df <- p1_ci_data()
     validate(need(nrow(df) > 0, "Insufficient data to compute confidence intervals."))
     
-    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_pct     <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_monthly <- input$p1_ci_type != "weather_binom_ci"
+    
     y_lab  <- switch(
       input$p1_ci_type,
-      "monthly_ratio_ci" = paste0("Monthly Avg Severe Crashes per 100k — Mean ± 95% CI (", p1_tier_short(), ")"),
-      "monthly_rate_ci"  = paste0("Monthly Avg Severe Crash Share % — Mean ± 95% CI (", p1_tier_short(), ")"),
+      "monthly_ratio_ci" = paste0("Monthly Avg Severe Crashes per 100k — Mean ± Time-Adjusted 95% CI (", p1_tier_short(), ")"),
+      "monthly_rate_ci"  = paste0("Monthly Avg Severe Crash Share % — Mean ± Time-Adjusted 95% CI (", p1_tier_short(), ")"),
       "weather_binom_ci" = paste0("Severe Crash Share % — Sim. 95% Binomial CI (", p1_tier_short(), ")")
     )
     
-    unit_word <- ifelse(input$p1_ci_type == "weather_binom_ci", "crashes", "months")
-    base_sz <- ifelse(isTRUE(input$a11y_high_contrast), 14, 12)
+    unit_word <- ifelse(is_monthly, "months", "crashes")
+    range_lbl <- ifelse(is_monthly, "Time-Adjusted Likely Range (Sim. 95% CI, ", "Likely Range (Sim. 95% CI, ")
+    base_sz   <- ifelse(isTRUE(input$a11y_high_contrast), 14, 12)
+    
+    df <- df %>%
+      mutate(
+        eff_line = if (is_monthly) {
+          paste0("<br>Effective Independent Months: ~", round(Eff_Months, 1), " of ", comma(N_Units))
+        } else {
+          ""
+        },
+        hover_txt = paste0(
+          "<b>", Group, "</b><br>",
+          "Point Estimate (Average): ", ifelse(is_pct, percent(Mean_Est, 0.1), round(Mean_Est, 2)), "<br>",
+          range_lbl, percent(conf_level, 0.01), "): [",
+          ifelse(is_pct, percent(CI_Lower, 0.1), round(CI_Lower, 2)), ", ",
+          ifelse(is_pct, percent(CI_Upper, 0.1), round(CI_Upper, 2)), "]<br>",
+          "Observed (n): ", comma(N_Units), " ", unit_word,
+          eff_line,
+          " | Comparisons (m): ", m_comparisons
+        )
+      )
     
     p <- ggplot(df, aes(x = reorder(Group, Mean_Est), y = Mean_Est)) +
       geom_errorbar(
@@ -1520,16 +1694,7 @@ server <- function(input, output, session) {
         width = 0, color = exec_teal, linewidth = ifelse(isTRUE(input$a11y_high_contrast), 3.2, 2.4)
       ) +
       geom_point(
-        aes(
-          text = paste0(
-            "<b>", Group, "</b><br>",
-            "Point Estimate (Average): ", ifelse(is_pct, percent(Mean_Est, 0.1), round(Mean_Est, 2)), "<br>",
-            "Likely Range (Sim. 95% CI, ", percent(conf_level, 0.01), "): [",
-            ifelse(is_pct, percent(CI_Lower, 0.1), round(CI_Lower, 2)), ", ",
-            ifelse(is_pct, percent(CI_Upper, 0.1), round(CI_Upper, 2)), "]<br>",
-            "Observed (n): ", comma(N_Units), " ", unit_word, " | Comparisons (m): ", m_comparisons
-          )
-        ),
+        aes(text = hover_txt),
         color = exec_crimson, shape = 18, size = ifelse(isTRUE(input$a11y_high_contrast), 4.5, 3.6)
       ) +
       coord_flip() +
@@ -1550,15 +1715,16 @@ server <- function(input, output, session) {
       )
   })
   
-  # Hybrid Page 1 CI Summary (app.R plain-language CI teaching + M4goldapp.R story context)
+  # Hybrid Page 1 CI Summary (plain-language CI teaching + time-adjustment explanation)
   output$p1_ci_sr_summary <- renderUI({
     df <- p1_ci_data() %>% arrange(desc(Mean_Est))
     if (nrow(df) == 0) return(NULL)
     
-    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_pct     <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_monthly <- input$p1_ci_type != "weather_binom_ci"
     top_g <- df %>% slice(1)
     fmt <- function(v) if (is_pct) percent(v, 0.1) else round(v, 2)
-    unit_word <- ifelse(input$p1_ci_type == "weather_binom_ci", "crashes", "months")
+    unit_word <- ifelse(is_monthly, "months", "crashes")
     
     interval_width <- top_g$CI_Upper - top_g$CI_Lower
     precision_msg <- if (
@@ -1577,15 +1743,32 @@ server <- function(input, output, session) {
       "crash measure"
     )
     
+    time_adj_msg <- if (is_monthly) {
+      paste0(
+        " Because consecutive months tend to track multi-month traffic patterns rather than resetting independently each month, ",
+        "these likely ranges are time-adjusted (about ", round(top_g$Eff_Months, 1),
+        " effective independent months out of ", comma(top_g$N_Units), " observed for ", top_g$Group, ") ",
+        "so uncertainty is not understated.",
+        if (input$p1_year == "All") {
+          " Note that 2016–2023 averages span shifting multi-year traffic and reporting levels; filter to a single year to inspect a steadier period."
+        } else {
+          ""
+        }
+      )
+    } else {
+      ""
+    }
+    
     msg <- paste0(
       "What this means (", p1_tier_label(), ", ", p1_year_label(), "; ", nrow(df), " groups shown): ",
-      "A simultaneous 95% confidence interval (shown as the likely range) gives a span of values ",
-      "consistent with the data, rather than relying on one single estimate. ",
+      "A ", ifelse(is_monthly, "time-adjusted simultaneous 95% confidence interval", "simultaneous 95% confidence interval"),
+      " (shown as the likely range) gives a span of values consistent with the data, rather than relying on one single estimate. ",
       "For the highest group, ", top_g$Group, ", the estimated ", metric_name, " is ",
       fmt(top_g$Mean_Est), " based on ", comma(top_g$N_Units), " ", unit_word,
       ", with a likely range (Bonferroni 95% CI) from ",
       fmt(top_g$CI_Lower), " to ", fmt(top_g$CI_Upper), ". ",
       precision_msg,
+      time_adj_msg,
       " This interval helps communicate how much uncertainty there is in the estimate; ",
       "it does not guarantee that the true value falls within this particular range. ",
       "Full numbers appear in the adjacent table."
@@ -1596,24 +1779,27 @@ server <- function(input, output, session) {
   
   output$p1_ci_table <- renderDT({
     df <- p1_ci_data()
-    is_pct <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_pct     <- input$p1_ci_type %in% c("monthly_rate_ci", "weather_binom_ci")
+    is_monthly <- input$p1_ci_type != "weather_binom_ci"
     
     tbl <- df %>%
       select(Group, N_Units, Mean_Est, CI_Lower, CI_Upper)
     
-    group_col_label <- ifelse(input$p1_ci_type == "weather_binom_ci", "Weather Condition", "Virginia Locality")
-    n_col_label     <- ifelse(input$p1_ci_type == "weather_binom_ci", "Crashes (n)", "Months (n)")
+    group_col_label <- ifelse(is_monthly, "Virginia Locality", "Weather Condition")
+    n_col_label     <- ifelse(is_monthly, "Months (n)", "Crashes (n)")
     est_col_label   <- switch(
       input$p1_ci_type,
       "monthly_ratio_ci" = "Monthly Avg (per 100k)",
       "monthly_rate_ci"  = "Monthly Avg Share (%)",
       "weather_binom_ci" = "Severe Crash Share (%)"
     )
+    low_col_label  <- ifelse(is_monthly, "Time-Adj. Low (95% CI)", "Range Low (95% CI)")
+    high_col_label <- ifelse(is_monthly, "Time-Adj. High (95% CI)", "Range High (95% CI)")
     
     cap_metric <- switch(
       input$p1_ci_type,
-      "monthly_ratio_ci" = "Monthly Averages & Simultaneous 95% CIs (Severe per 100k)",
-      "monthly_rate_ci"  = "Monthly Averages & Simultaneous 95% CIs (Severe Share %)",
+      "monthly_ratio_ci" = "Monthly Averages & Time-Adjusted Simultaneous 95% CIs (Severe per 100k)",
+      "monthly_rate_ci"  = "Monthly Averages & Time-Adjusted Simultaneous 95% CIs (Severe Share %)",
       "weather_binom_ci" = "Weather Severe Crash Shares & Simultaneous 95% Binomial CIs"
     )
     
@@ -1624,7 +1810,7 @@ server <- function(input, output, session) {
         style = "caption-side: top; font-weight: bold; color: #0F2042;",
         paste0(cap_metric, " — ", p1_tier_short(), " (", p1_year_label(), ")")
       ),
-      colnames = c(group_col_label, n_col_label, est_col_label, "Range Low (95% CI)", "Range High (95% CI)"),
+      colnames = c(group_col_label, n_col_label, est_col_label, low_col_label, high_col_label),
       options = list(pageLength = 8, dom = "tip", scrollX = TRUE)
     )
     
@@ -2277,7 +2463,7 @@ server <- function(input, output, session) {
     render_a11y_box(msg, input$a11y_show_text)
   })
   
-  # Monthly Weather Averages & Ranges per Selected Locality
+  # Monthly Weather Averages & Time-Adjusted (Newey-West HAC) Ranges per Selected Locality
   p2_ci_data <- reactive({
     locs      <- p2_selected_locs()
     w_monthly <- p2_qualified_monthly_weather()
@@ -2288,7 +2474,7 @@ server <- function(input, output, session) {
     
     grouped <- w_monthly %>%
       mutate(census_name = as.character(census_name)) %>%
-      filter(!is.na(.data[[target_col]]) & !is.nan(.data[[target_col]])) %>%
+      filter(!is.na(.data[[target_col]]) & !is.nan(.data[[target_col]]) & !is.na(month_year)) %>%
       group_by(census_name, Group = Weather_Group) %>%
       summarise(
         pop      = first(population),
@@ -2296,10 +2482,13 @@ server <- function(input, output, session) {
         Mean_Est = mean(.data[[target_col]], na.rm = TRUE),
         variance = var(.data[[target_col]], na.rm = TRUE),
         stdev    = sqrt(pmax(0, variance)),
-        SE       = stdev / sqrt(N_Units),
+        nw_res   = list(calc_newey_west_se(month_year, .data[[target_col]])),
         .groups  = "drop"
       ) %>%
       filter(Mean_Est > 0)
+    
+    if (nrow(grouped) == 0) return(tibble())
+    grouped <- grouped %>% unnest_wider(nw_res)
     
     # Apply min_months = 10 per locality with graceful rural fallback
     filtered <- map_dfr(locs, function(loc) {
@@ -2332,7 +2521,7 @@ server <- function(input, output, session) {
     m_val <- if (nrow(df) > 0) df$m_comparisons[1] else 1
     c_lvl <- if (nrow(df) > 0) percent(df$conf_level[1], accuracy = 0.01) else "95.0%"
     paste0(
-      "Monthly Weather Averages & Simultaneous 95% Confidence Intervals: ",
+      "Monthly Weather Averages & Time-Adjusted Simultaneous 95% Confidence Intervals: ",
       p2_locs_label(), " (Bonferroni, m = ", m_val, ", ", c_lvl, " level)"
     )
   })
@@ -2350,8 +2539,8 @@ server <- function(input, output, session) {
     is_pct <- (input$p2_weather_metric == "severe_rate")
     x_lab  <- ifelse(
       is_pct,
-      "Monthly Avg Severe Crash Share % (Mean ± Sim. 95% CI)",
-      "Monthly Avg Severe Crashes per 100k Residents (Mean ± Sim. 95% CI)"
+      "Monthly Avg Severe Crash Share % (Mean ± Time-Adjusted Sim. 95% CI)",
+      "Monthly Avg Severe Crashes per 100k Residents (Mean ± Time-Adjusted Sim. 95% CI)"
     )
     
     cat_order <- df %>%
@@ -2373,9 +2562,10 @@ server <- function(input, output, session) {
         row_label = if (n_locs == 1) Group else paste0(Group, " — ", short_name),
         hover_txt = paste0(
           "<b>", census_name, " — ", Group, "</b><br>",
-          "Qualifying Months (n): ", N_Units, "<br>",
+          "Qualifying Months (n): ", N_Units,
+          " (Effective Independent Months: ~", round(Eff_Months, 1), ")<br>",
           "Monthly Average (Mean): ", ifelse(is_pct, percent(Mean_Est, 0.1), round(Mean_Est, 2)), "<br>",
-          "Likely Range (Sim. 95% CI, ", percent(conf_level, 0.01), "): [",
+          "Time-Adjusted Likely Range (Sim. 95% CI, ", percent(conf_level, 0.01), "): [",
           ifelse(is_pct, percent(CI_Lower, 0.1), round(CI_Lower, 2)), ", ",
           ifelse(is_pct, percent(CI_Upper, 0.1), round(CI_Upper, 2)), "]"
         )
@@ -2459,7 +2649,7 @@ server <- function(input, output, session) {
     plt
   })
   
-  # Hybrid Page 2 CI Summary (app.R plain-language CI teaching + M4goldapp.R multi-locality context)
+  # Hybrid Page 2 CI Summary (plain-language CI teaching + time-adjustment explanation)
   output$p2_ci_sr_summary <- renderUI({
     df <- p2_ci_data() %>% arrange(desc(Mean_Est))
     if (nrow(df) == 0) return(NULL)
@@ -2492,7 +2682,7 @@ server <- function(input, output, session) {
     msg <- paste0(
       "What this means: This summary compares monthly crash patterns in ",
       p2_locs_label(),
-      " across core weather categories using simultaneous 95% confidence intervals ",
+      " across core weather categories using time-adjusted simultaneous 95% confidence intervals ",
       "(shown as likely ranges). ",
       top_group_label,
       " has the highest estimated ",
@@ -2501,15 +2691,16 @@ server <- function(input, output, session) {
       fmt(top_c$Mean_Est),
       " per month across ",
       top_c$N_Units,
-      " qualifying months. ",
-      "Based on the available data, the likely range (Bonferroni 95% CI) ",
+      " qualifying months (about ", round(top_c$Eff_Months, 1),
+      " effective independent months after accounting for consecutive months tracking multi-month traffic patterns). ",
+      "Based on the available data, the time-adjusted likely range (Bonferroni 95% CI) ",
       "is between ",
       fmt(top_c$CI_Lower),
       " and ",
       fmt(top_c$CI_Upper),
       ". ",
       precision_msg,
-      " This interval helps show how much the monthly estimate may vary; ",
+      " This interval helps show how much the monthly estimate may vary across 2016–2023; ",
       "it does not guarantee that the true value falls within this particular range."
     )
     
@@ -2528,9 +2719,9 @@ server <- function(input, output, session) {
       rownames = FALSE,
       caption = htmltools::tags$caption(
         style = "caption-side: top; font-weight: bold; color: #0F2042;",
-        paste0("Monthly Weather Averages & Simultaneous 95% CIs: ", p2_locs_label())
+        paste0("Monthly Weather Averages & Time-Adjusted Simultaneous 95% CIs: ", p2_locs_label())
       ),
-      colnames = c("Locality", "Core Weather Category", "Qualifying Months (n)", "Monthly Mean", "Range Low (95% CI)", "Range High (95% CI)"),
+      colnames = c("Locality", "Core Weather Category", "Qualifying Months (n)", "Monthly Mean", "Time-Adj. Low (95% CI)", "Time-Adj. High (95% CI)"),
       options = list(pageLength = 8, dom = "tip", scrollX = TRUE)
     )
     
@@ -2604,6 +2795,9 @@ server <- function(input, output, session) {
         (input$p2_weather_metric != "severe_rate" | ci$CI_Upper <= 1),
       na.rm = TRUE
     )
+    nw_se_ok <- nrow(ci) > 0 && all(
+      is.finite(ci$SE) & ci$SE >= 0
+    )
     weather_counts_ok <- nrow(weather) > 0 && all(
       weather$severe_accidents + weather$not_severe_accidents == weather$accidents
     )
@@ -2617,7 +2811,8 @@ server <- function(input, output, session) {
         "Monthly Poisson CIs contain severe counts & per-100k ratios",
         "Monthly binomial CIs contain severe rates",
         "Weather binomial CIs contain severe rates",
-        "Monthly weather CIs contain their means",
+        "Time-adjusted (Newey-West) monthly weather CIs contain their means",
+        "Newey-West HAC monthly standard errors are finite and non-negative",
         "Weather severe + non-severe counts equal total",
         "Weather descriptions match assigned categories"
       ),
@@ -2626,6 +2821,7 @@ server <- function(input, output, session) {
         check_status(rate_ok, any(!is.na(ts$severe_rate))),
         check_status(weather_ci_ok, nrow(weather) > 0),
         check_status(monthly_ci_ok, nrow(ci) > 0),
+        check_status(nw_se_ok, nrow(ci) > 0),
         check_status(weather_counts_ok, nrow(weather) > 0),
         check_status(grouping_ok, nrow(raw_weather) > 0)
       )
@@ -2733,6 +2929,7 @@ server <- function(input, output, session) {
         "Weather Grouping",
         "Time-Series Metric",
         "Weather Metric",
+        "Monthly CI Standard Error Method",
         "Multiple Comparisons Method",
         "Minimum Accidents per Month",
         "Minimum Qualifying Months"
@@ -2742,6 +2939,7 @@ server <- function(input, output, session) {
         "Weather_Category (5 Core Weather Categories)",
         input$p2_ts_metric,
         input$p2_weather_metric,
+        "Newey-West HAC (Bartlett kernel, automatic bandwidth, calendar-month grid)",
         "bonferroni",
         "5",
         "10"
